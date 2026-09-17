@@ -1,0 +1,318 @@
+:root {
+  color-scheme: light;
+  --border: #d9dde3;
+  --today: #fff4d6;
+  --weekend: #f4f5f7;
+  --text: #1f2430;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  color: var(--text);
+  background: #fafbfc;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.nav { display: flex; gap: 8px; }
+
+.btn {
+  text-decoration: none;
+  color: var(--text);
+  background: #f0f1f3;
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.btn:hover { background: #e6e8eb; }
+
+.btn-primary {
+  background: #2472a4;
+  color: #fff;
+  border-color: #2472a4;
+}
+
+.btn-primary:hover { background: #1d5c84; }
+
+.banner {
+  margin: 12px 20px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.banner-warn { background: #fff3cd; color: #7a5c00; border: 1px solid #ffe08a; }
+.banner-error { background: #fdecea; color: #9c1c12; border: 1px solid #f5c2bd; }
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+table.planning {
+  border-collapse: collapse;
+  min-width: 100%;
+}
+
+table.planning th, table.planning td {
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 6px;
+  vertical-align: top;
+  font-size: 12px;
+}
+
+.col-name {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 10;
+  text-align: left;
+  padding: 8px 10px;
+  white-space: nowrap;
+  font-weight: 600;
+  min-width: 130px;
+}
+
+thead .col-name { background: #f7f8fa; z-index: 15; }
+
+/* Zébrage par bloc technicien (et non par ligne/créneau) : un technicien
+   peut occuper plusieurs lignes <tr> (une par créneau), elles doivent
+   garder la même couleur pour lire un seul bloc, cf. .emp-a/.emp-b posées
+   par le JS sur chaque <tr> d'un même technicien. */
+tbody tr.emp-a { background: #ffffff; }
+tbody tr.emp-b { background: #f2f3f5; }
+
+tbody tr.emp-a .col-name { background: #ffffff; }
+tbody tr.emp-b .col-name { background: #f2f3f5; }
+
+.col-day {
+  min-width: 92px;
+  text-align: center;
+  background: #f7f8fa;
+}
+
+.col-day .dow { font-weight: 600; font-size: 11px; color: #667; }
+.col-day .date { font-size: 12px; }
+
+.week-start { border-left: 2px solid #b7bec9; }
+
+.is-weekend { background: var(--weekend); }
+.is-today { background: var(--today) !important; }
+
+.cell { min-width: 92px; cursor: pointer; }
+.cell.drag-over { outline: 2px dashed #2472a4; outline-offset: -2px; background: #eaf3f8; }
+
+.task {
+  border-radius: 4px;
+  padding: 3px 5px;
+  margin: 0 0 3px 0;
+  min-height: 1.25em;
+  line-height: 1.25;
+  word-break: break-word;
+  cursor: grab;
+}
+
+.task:active { cursor: grabbing; }
+.task.dragging { opacity: .4; }
+.task.placeholder { background: transparent; cursor: pointer; }
+.task.truncated { cursor: pointer; background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.16) 0 6px, transparent 6px 12px); }
+
+.task:last-child { margin-bottom: 0; }
+
+/* Tâche multi-jours : la même tâche est répétée dans chaque cellule-jour
+   qu'elle occupe ; on efface la jonction (bord arrondi + marge) du côté qui
+   touche le fragment suivant/précédent pour lire un seul bloc continu. */
+.task.seg-cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -6px; position: relative; z-index: 1; }
+.task.seg-cont-left { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -6px; }
+
+.task-affaire {
+  display: block;
+  font-size: 10px;
+  opacity: .8;
+  margin-top: 1px;
+}
+
+.task-head {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.task-code { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Texte libre dans une police plus petite et limité à quelques lignes : sans
+   ça, une description longue faisait grossir toute la ligne de la grille
+   (cf. bug d'alignement) et noyait l'info importante (code/client/affaire)
+   sous le pavé de texte. */
+.task-texte {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.3;
+  opacity: .85;
+}
+
+.task.expanded .task-texte {
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.task-expand {
+  display: block;
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  color: inherit;
+  opacity: .85;
+}
+.task-expand:hover { opacity: 1; }
+
+.loading, .empty { text-align: center; color: #888; padding: 24px; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(20, 24, 32, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px;
+}
+.modal-overlay[hidden] { display: none; }
+
+.modal {
+  background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 440px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.2);
+}
+.modal h2 { margin: 0 0 14px; font-size: 16px; }
+
+.modal label {
+  display: block; font-size: 12px; font-weight: 600; color: #556; margin-bottom: 10px;
+}
+.modal select, .modal textarea, .modal input[type="date"] {
+  width: 100%; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; font-family: inherit; color: var(--text);
+}
+.modal textarea { resize: vertical; }
+
+.modal-dates { display: flex; gap: 10px; }
+.modal-dates label { flex: 1; }
+
+.modal-code-client { display: flex; gap: 10px; }
+.modal-code-client label:first-child { flex: 0 0 130px; }
+.modal-code-client label:last-child { flex: 1; }
+
+.label-optional { font-weight: 400; color: #889; }
+
+.affaire-tasks {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 10px 8px;
+  margin: -2px 0 12px; background: #fafbfc;
+}
+.affaire-tasks-title { font-size: 12px; font-weight: 600; color: #556; margin-bottom: 6px; }
+
+.affaire-tasks-list { list-style: none; margin: 0; padding: 0; }
+.affaire-tasks-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 2px; font-size: 13px; border-bottom: 1px solid #eef0f3;
+}
+.affaire-tasks-list li:last-child { border-bottom: none; }
+.affaire-tasks-list li.loading-item { color: #99a; font-size: 12px; padding: 4px 2px; }
+.affaire-tasks-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 0; flex: 1; cursor: pointer; min-width: 0; }
+.affaire-tasks-list label span { overflow-wrap: anywhere; }
+.affaire-tasks-list input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+.affaire-tasks-list span.done { text-decoration: line-through; color: #99a; }
+
+.affaire-task-assignee {
+  flex: none; width: auto; max-width: 110px; margin: 0; padding: 3px 4px;
+  font-size: 12px; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); background: #fff;
+}
+
+.affaire-task-del {
+  background: none; border: none; color: #b33; font-size: 16px; line-height: 1;
+  cursor: pointer; padding: 2px 4px;
+}
+.affaire-task-del:hover { color: #7a1c12; }
+
+.affaire-tasks-add { display: flex; gap: 6px; margin-top: 8px; }
+.affaire-tasks-add input { flex: 1; margin-top: 0; }
+.affaire-tasks-add select { flex: none; width: auto; max-width: 110px; margin-top: 0; padding: 6px 6px; }
+.affaire-tasks-add button { padding: 4px 12px; }
+
+.modal-error {
+  background: #fdecea; color: #9c1c12; border: 1px solid #f5c2bd;
+  border-radius: 6px; padding: 8px 10px; font-size: 12px; margin: 4px 0 10px;
+}
+
+.modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.modal-actions .spacer { flex: 1; }
+
+.btn-danger { background: #fdecea; color: #9c1c12; border-color: #f5c2bd; }
+.btn-danger:hover { background: #f9d7d3; }
+
+.toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 200;
+  background: #1f2430; color: #fff; padding: 10px 16px; border-radius: 8px;
+  font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+}
+.toast-danger { background: #9c1c12; }
+
+.legend {
+  margin: 0 20px 20px;
+  font-size: 12px;
+  color: #556;
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 8px;
+}
+
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.foot {
+  text-align: center;
+  color: #99a;
+  font-size: 11px;
+  padding: 10px 0 24px;
+}
+
+@media (max-width: 600px) {
+  .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planning atelier</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Planning atelier</h1>
+    <nav class="nav">
+      <button class="btn" id="btn-prev">&larr; Semaine préc.</button>
+      <button class="btn btn-primary" id="btn-today">Aujourd'hui</button>
+      <button class="btn" id="btn-next">Semaine suiv. &rarr;</button>
+      <button class="btn btn-primary" id="btn-new">+ Nouvelle tâche</button>
+    </nav>
+  </header>
+
+  <div id="banner-root"></div>
+
+  <div class="table-wrap">
+    <div id="grid-root"><p class="loading">Chargement…</p></div>
+  </div>
+
+  <details class="legend">
+    <summary>Légende des codes</summary>
+    <div class="legend-items" id="legend-root">
+      {% for code, (label, color) in legend.items() %}
+        <span class="legend-item"><span class="swatch" style="background:{{ color }}"></span>{{ code }} — {{ label }}</span>
+      {% endfor %}
+    </div>
+  </details>
+
+  <footer class="foot">Source : Google Sheet "Planning" — onglet PLANNING quotidien. Glisser une tâche pour la déplacer, Ctrl+glisser pour la dupliquer.</footer>
+
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <h2 id="modal-title">Tâche</h2>
+      <form id="modal-form">
+        <label>Technicien
+          <select id="f-employee" required></select>
+        </label>
+        <div class="modal-code-client">
+          <label>Code
+            <select id="f-code">
+              <option value="">—</option>
+              {% for code, (label, color) in legend.items() %}
+                <option value="{{ code }}">{{ code }} — {{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Client
+            <input type="text" id="f-client" placeholder="Ex : ITRON">
+          </label>
+        </div>
+        <label>N° affaire <span class="label-optional">(optionnel — lie une checklist de tâches ci-dessous)</span>
+          <input type="text" id="f-affaire" placeholder="Ex : ITRON-2026-042">
+        </label>
+        <div id="affaire-tasks" class="affaire-tasks" hidden>
+          <div class="affaire-tasks-title">Tâches de l'affaire</div>
+          <ul id="affaire-tasks-list" class="affaire-tasks-list"></ul>
+          <div class="affaire-tasks-add">
+            <input type="text" id="affaire-task-new" placeholder="Ajouter une tâche…">
+            <select id="affaire-task-new-assignee" title="Assigner à"></select>
+            <button type="button" class="btn" id="affaire-task-add-btn">+</button>
+          </div>
+        </div>
+        <label>Texte <span class="label-optional">(détails, optionnel)</span>
+          <textarea id="f-text" rows="3" placeholder="Ex : Préparation du programme robot R1"></textarea>
+        </label>
+        <div class="modal-dates">
+          <label>Du
+            <input type="date" id="f-date-start" required>
+          </label>
+          <label>Au
+            <input type="date" id="f-date-end" required>
+          </label>
+        </div>
+        <p class="modal-error" id="modal-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-danger" id="btn-delete" hidden>Supprimer</button>
+          <button type="button" class="btn" id="btn-duplicate" hidden>Dupliquer</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="btn-cancel">Annuler</button>
+          <button type="submit" class="btn btn-primary" id="btn-save">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    window.PLANNING_WEEK_OFFSET = {{ week_offset }};
+  </script>
+  <script src="{{ url_for('static', filename='planning.js') }}"></script>
+</body>
+</html>
