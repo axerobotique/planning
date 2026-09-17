@@ -718,8 +718,12 @@ def api_affaire_tasks_delete():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5050"))
+    # debug=True active le débogueur Werkzeug (exécution de code arbitraire
+    # via son interface web) : à réserver au poste local, jamais à un
+    # déploiement accessible publiquement (Render, etc.).
+    debug = os.environ.get("FLASK_DEBUG") == "1"
     # threaded=True : sans ça, une requête bloquée sur un appel Google Sheets
     # lent gèle tout le serveur pour tous les utilisateurs (le client Sheets
     # utilise déjà un service par thread — cf. `_thread_local` dans
     # sheets_client.py — donc le mode threadé est sûr).
-    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)
