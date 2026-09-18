@@ -1,11 +1,12 @@
 """Client Google Sheets minimal — lecture seule de la feuille "PLANNING quotidien".
 
-Auth : service account (le même que celui déjà utilisé par le MCP gsheets /
-CLAUDE PROSPECTION), résolu dans cet ordre :
-  1. variable d'env GOOGLE_APPLICATION_CREDENTIALS
-  2. ~/.claude/google-credentials.json
-Aucune copie de clé n'est nécessaire : ce fichier est déjà présent sur les
-postes qui utilisent Claude Code / le MCP gsheets.
+Auth : résolue dans cet ordre :
+  1. fichier clé service account via GOOGLE_APPLICATION_CREDENTIALS
+  2. fichier clé ~/.claude/google-credentials.json (poste local avec
+     Claude Code / le MCP gsheets — aucune copie de clé nécessaire)
+  3. Application Default Credentials (google.auth.default) : sur Cloud Run,
+     ça résout automatiquement l'identité IAM du service attaché, sans
+     aucun fichier de clé à gérer.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import time
 from threading import Lock
 from typing import Any
 
+import google.auth
 import httplib2
 from google.oauth2 import service_account
 from google_auth_httplib2 import AuthorizedHttp
@@ -54,13 +56,10 @@ _sheet_meta_cache: dict[str, Any] = {}
 def _get_service():
     svc = getattr(_thread_local, "service", None)
     if svc is None:
-        if not os.path.exists(CREDENTIALS_PATH):
-            raise FileNotFoundError(
-                f"Identifiants Google introuvables ({CREDENTIALS_PATH}). "
-                "Définis GOOGLE_APPLICATION_CREDENTIALS ou place le fichier "
-                "service account dans ~/.claude/google-credentials.json."
-            )
-        creds = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
+        if CREDENTIALS_PATH and os.path.exists(CREDENTIALS_PATH):
+            creds = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
+        else:
+            creds, _ = google.auth.default(scopes=SCOPES)
         authed_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=REQUEST_TIMEOUT_SECONDS))
         svc = build("sheets", "v4", http=authed_http, cache_discovery=False)
         _thread_local.service = svc
