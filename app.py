@@ -12,13 +12,35 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import secrets
 from datetime import date, timedelta
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 import sheets_client
 
 app = Flask(__name__)
+
+# Protection minimale par mot de passe partagé : l'app n'a aucune notion
+# d'utilisateur/session, donc dès qu'elle est exposée publiquement (Cloud
+# Run, etc.) n'importe qui avec le lien pourrait sinon lire ET modifier le
+# planning. PLANNING_PASSWORD doit être défini en variable d'env sur tout
+# déploiement public ; en local, si elle est absente, l'accès reste libre
+# (confort de dev).
+PLANNING_PASSWORD = os.environ.get("PLANNING_PASSWORD")
+
+
+@app.before_request
+def _require_password():
+    if not PLANNING_PASSWORD:
+        return
+    auth = request.authorization
+    if not auth or not secrets.compare_digest(auth.password or "", PLANNING_PASSWORD):
+        return Response(
+            "Authentification requise.",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Planning ARA"'},
+        )
 
 # Ancrage de la reconstruction des dates : la feuille n'affiche que "dd/mm"
 # (pas d'année) donc on retrouve l'année réelle en se calant sur le premier
