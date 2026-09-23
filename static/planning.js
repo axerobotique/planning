@@ -3,11 +3,12 @@
 
   const gridRoot = document.getElementById("grid-root");
   const bannerRoot = document.getElementById("banner-root");
+  const legendRoot = document.getElementById("legend-root");
   const overlay = document.getElementById("modal-overlay");
   const form = document.getElementById("modal-form");
   const modalTitle = document.getElementById("modal-title");
   const modalError = document.getElementById("modal-error");
-  const fEmployee = document.getElementById("f-employee");
+  const fEmployees = document.getElementById("f-employees");
   const fCode = document.getElementById("f-code");
   const fClient = document.getElementById("f-client");
   const fText = document.getElementById("f-text");
@@ -29,7 +30,10 @@
   let dragging = false;
 
   // État de l'édition en cours dans la modale : null si "nouvelle tâche".
-  let editing = null; // { row, oldDates: [iso...] }
+  // `groupId`/`members` décrivent les autres techniciens déjà affectés à la
+  // même tâche (cf. marqueur [GRP:] côté serveur) : édition/déplacement/
+  // suppression leur sont propagés pour rester synchronisés.
+  let editing = null; // { row, oldDates: [iso...], groupId, members: [{employee, row, old_dates}] }
 
   // Même limite que le serveur (cf. MAX_TASK_SPAN_DAYS dans app.py) : filet de
   // sécurité client pour échouer vite et clairement plutôt que d'envoyer une
@@ -123,7 +127,38 @@
     const resp = await fetch(`/api/grid?s=${encodeURIComponent(weekOffset)}`);
     const data = await resp.json();
     currentData = data;
+    renderLegend(data.legend);
     renderGrid(data);
+  }
+
+  // La légende est re-rendue à chaque chargement (pas seulement au premier
+  // rendu Jinja) pour refléter tout de suite une couleur changée par un
+  // autre utilisateur — cf. le sélecteur natif <input type="color"> posé sur
+  // chaque swatch, qui persiste son changement via /api/legend/color.
+  function renderLegend(legend) {
+    if (!legend) return;
+    legendRoot.innerHTML = Object.entries(legend).map(([code, info]) => `
+      <span class="legend-item">
+        <input type="color" class="swatch" value="${info.color}" data-code="${esc(code)}" title="Changer la couleur de ${esc(code)}">
+        ${esc(code)} — ${esc(info.label)}
+      </span>`).join("");
+
+    legendRoot.querySelectorAll("input.swatch").forEach((inp) => {
+      inp.addEventListener("change", async () => {
+        const code = inp.dataset.code;
+        try {
+          const d = await fetchJSON("/api/legend/color", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, color: inp.value }),
+          });
+          if (!d.ok) throw new Error(d.error || "Erreur.");
+          showToast(`Couleur de ${code} mise à jour.`);
+          await loadGrid();
+        } catch (e) {
+          showToast(e.message || "Erreur.", "danger");
+        }
+      });
+    });
   }
 
   function renderGrid(data) {
@@ -221,7 +256,7 @@
         data-row="${t.row}" data-date-start="${t.date_start}" data-date-end="${t.date_end}"
         data-employee="${esc(employeeName)}" data-text="${esc(t.raw_text)}" data-code="${esc(t.code)}"
         data-client="${esc(t.client)}" data-texte="${esc(t.texte)}"
-        data-affaire="${esc(t.affaire || "")}">${body}</div>`;
+        data-affaire="${esc(t.affaire || "")}" data-group="${esc(t.group || "")}">${body}</div>`;
   }
 
   function bindGridEvents() {
@@ -246,6 +281,7 @@
           client: el.dataset.client,
           texte: el.dataset.texte,
           affaire: el.dataset.affaire,
+          group: el.dataset.group,
           dateStart: el.dataset.dateStart,
           dateEnd: el.dataset.dateEnd,
         });
@@ -321,11 +357,16 @@
     });
   }
 
-  function fillEmployeeOptions(selected) {
+  function fillEmployeeCheckboxes(selected) {
     const names = (currentData && currentData.employees || []).map((e) => e.name);
-    fEmployee.innerHTML = names.map((n) =>
-      `<option value="${esc(n)}" ${n === selected ? "selected" : ""}>${esc(n)}</option>`
+    const selectedSet = new Set(selected || []);
+    fEmployees.innerHTML = names.map((n) =>
+      `<label><input type="checkbox" value="${esc(n)}" ${selectedSet.has(n) ? "checked" : ""}> ${esc(n)}</label>`
     ).join("");
+  }
+
+  function getSelectedEmployees() {
+    return Array.from(fEmployees.querySelectorAll("input[type=checkbox]:checked")).map((c) => c.value);
   }
 
   function assigneeOptionsHtml(selected) {
@@ -351,7 +392,7 @@
   function openCreateModal(employee, dateIso) {
     editing = null;
     modalTitle.textContent = "Nouvelle tâche";
-    fillEmployeeOptions(employee);
+    fillEmployeeCheckboxes(employee ? [employee] : []);
     fCode.value = "";
     fClient.value = "";
     fText.value = "";
@@ -367,16 +408,28 @@
   }
 
   function openEditModal(task) {
-    let oldDates;
+    let oldDates, members, selectedEmployees;
     try {
       oldDates = isoRange(task.dateStart, task.dateEnd);
+      // Autres techniciens déjà affectés à cette même tâche (même groupe,
+      // cf. `groups` renvoyé par /api/grid) : on pré-coche leurs cases et on
+      // garde leur ligne/dates pour propager l'édition/suppression.
+      const groupId = task.group || "";
+      const groupMembers = (groupId && currentData && currentData.groups && currentData.groups[groupId]) || [];
+      const others = groupMembers.filter((m) => !(m.row === task.row && m.employee === task.employee));
+      members = others.map((m) => ({
+        employee: m.employee,
+        row: m.row,
+        old_dates: isoRange(m.date_start, m.date_end),
+      }));
+      selectedEmployees = Array.from(new Set([task.employee, ...others.map((m) => m.employee)]));
     } catch (err) {
       showToast(err.message || "Plage de dates invalide.", "danger");
       return;
     }
-    editing = { row: task.row, oldDates };
+    editing = { row: task.row, oldDates, groupId: task.group || "", members };
     modalTitle.textContent = "Éditer la tâche";
-    fillEmployeeOptions(task.employee);
+    fillEmployeeCheckboxes(selectedEmployees);
     fCode.value = task.code || "";
     fClient.value = task.client || "";
     fText.value = task.texte || "";
@@ -535,10 +588,17 @@
       showModalError("Renseigne au moins un code, un client ou un texte.");
       return;
     }
+    const employees = getSelectedEmployees();
+    if (!employees.length) {
+      showModalError("Sélectionne au moins un technicien.");
+      return;
+    }
     const body = {
       row: editing ? editing.row : null,
       old_dates: editing ? editing.oldDates : [],
-      employee: fEmployee.value,
+      group_id: editing ? editing.groupId : "",
+      members: editing ? editing.members : [],
+      employees,
       text,
       affaire: fAffaire.value.trim(),
       date_start: fDateStart.value,
@@ -556,10 +616,16 @@
 
   btnDelete.addEventListener("click", async () => {
     if (!editing) return;
-    if (!confirm("Supprimer cette tâche ?")) return;
+    const groupSize = 1 + editing.members.length;
+    const msg = groupSize > 1
+      ? `Supprimer cette tâche pour les ${groupSize} techniciens concernés ?`
+      : "Supprimer cette tâche ?";
+    if (!confirm(msg)) return;
+    const instances = [{ row: editing.row, dates: editing.oldDates }]
+      .concat(editing.members.map((m) => ({ row: m.row, dates: m.old_dates })));
     const resp = await fetch("/api/task/delete", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ row: editing.row, dates: editing.oldDates }),
+      body: JSON.stringify({ instances }),
     });
     const d = await resp.json();
     if (!d.ok) { showModalError(d.error || "Erreur."); return; }
@@ -579,21 +645,31 @@
       showModalError("Renseigne au moins un code, un client ou un texte.");
       return;
     }
-    const resp = await fetch("/api/task/relocate", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        row: editing.row,
-        dates: editing.oldDates,
-        text,
-        affaire: fAffaire.value.trim(),
-        target_employee: fEmployee.value,
-        date_start: fDateStart.value,
-        date_end: fDateEnd.value,
-        mode: "duplicate",
-      }),
-    });
-    const d = await resp.json();
-    if (!d.ok) { showModalError(d.error || "Erreur."); return; }
+    // Dupliquer crée des copies indépendantes (pas de groupe synchronisé) sur
+    // chaque technicien coché, contrairement à "Enregistrer" qui garde les
+    // techniciens liés.
+    const employees = getSelectedEmployees();
+    if (!employees.length) {
+      showModalError("Sélectionne au moins un technicien.");
+      return;
+    }
+    for (const targetEmployee of employees) {
+      const resp = await fetch("/api/task/relocate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          row: editing.row,
+          dates: editing.oldDates,
+          text,
+          affaire: fAffaire.value.trim(),
+          target_employee: targetEmployee,
+          date_start: fDateStart.value,
+          date_end: fDateEnd.value,
+          mode: "duplicate",
+        }),
+      });
+      const d = await resp.json();
+      if (!d.ok) { showModalError(d.error || "Erreur."); return; }
+    }
     closeModal();
     showToast("Tâche dupliquée.");
     await loadGrid();

@@ -12,6 +12,7 @@ Auth : résolue dans cet ordre :
 from __future__ import annotations
 
 import os
+import socket
 import threading
 import time
 from threading import Lock
@@ -22,6 +23,23 @@ import httplib2
 from google.oauth2 import service_account
 from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
+
+# Contournement : sur certains postes/réseaux, l'IPv6 est annoncé par l'OS
+# mais en réalité mort vers l'infra Google (connexion qui n'aboutit jamais).
+# httplib2 utilise toujours la première adresse renvoyée par getaddrinfo()
+# (IPv6 en général) sans repli automatique vers IPv4 : chaque appel Sheets
+# reste bloqué ~30s (REQUEST_TIMEOUT_SECONDS) puis échoue en 500 — ce qui,
+# côté front, laisse l'écran figé sur "Chargement…" sans aucun message (cf.
+# incident constaté en local). On force donc IPv4 pour ce process, sans
+# toucher à la configuration réseau du poste.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 SPREADSHEET_ID = "1hyQc7zrQfEMFycw-BKCUwXKAV52V1RZ0VIO72h5BicM"
 SHEET_NAME = "PLANNING quotidien"

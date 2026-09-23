@@ -27,7 +27,10 @@
     <summary>Légende des codes</summary>
     <div class="legend-items" id="legend-root">
       {% for code, (label, color) in legend.items() %}
-        <span class="legend-item"><span class="swatch" style="background:{{ color }}"></span>{{ code }} — {{ label }}</span>
+        <span class="legend-item">
+          <input type="color" class="swatch" value="{{ color }}" data-code="{{ code }}" title="Changer la couleur de {{ code }}">
+          {{ code }} — {{ label }}
+        </span>
       {% endfor %}
     </div>
   </details>
@@ -38,9 +41,10 @@
     <div class="modal" role="dialog" aria-modal="true">
       <h2 id="modal-title">Tâche</h2>
       <form id="modal-form">
-        <label>Technicien
-          <select id="f-employee" required></select>
-        </label>
+        <div class="field">
+          <span class="field-label">Techniciens <span class="label-optional">(plusieurs possibles — la tâche est alors affectée automatiquement à chacun)</span></span>
+          <div id="f-employees" class="employee-multiselect" role="group" aria-label="Techniciens"></div>
+        </div>
         <div class="modal-code-client">
           <label>Code
             <select id="f-code">

@@ -83,17 +83,28 @@ STATUT_STYLES = {
     "CONGÉS": {"bg": "#eceff1", "fg": "#607d8b", "italic": True},
 }
 
-# Le numéro d'affaire d'une tâche est encodé directement dans le texte brut de
-# la cellule (ex: "ROB-ITRON [AFF:ITRON-2026-042]"), pas dans une colonne à
+# Le numéro d'affaire et l'éventuel identifiant de groupe multi-technicien
+# d'une tâche sont encodés directement dans le texte brut de la cellule (ex:
+# "ROB-ITRON [AFF:ITRON-2026-042] [GRP:a1b2c3d4]"), pas dans une colonne à
 # part : ça le fait voyager naturellement avec le texte lors d'un
 # déplacement/duplication/édition, sans mapping externe fragile (une ligne
 # vidée peut être réutilisée par une tâche totalement différente — cf.
-# `place_task`). Le marqueur est retiré avant affichage.
-AFFAIRE_MARKER_RE = re.compile(r"\s*\[AFF:([^\]]*)\]\s*$")
+# `place_task`). Les marqueurs sont retirés avant affichage.
+MARKER_RE = re.compile(r"\s*\[(AFF|GRP):([^\]]*)\]\s*$")
 
 TACHES_SHEET = "Taches"
 TACHES_HEADER = ["Numéro affaire", "Texte", "Fait", "Assigné"]
 TACHES_READ_RANGE = "A2:D2000"
+
+# Couleurs de la légende (CODES ci-dessus) personnalisables depuis l'UI :
+# les personnalisations sont stockées dans un onglet séparé plutôt que codées
+# en dur, pour survivre aux redéploiements et être partagées par tous (même
+# principe que l'onglet "Taches"). CODES reste la source des libellés et des
+# couleurs par défaut ; seule la couleur peut être surchargée.
+COULEURS_SHEET = "Couleurs"
+COULEURS_HEADER = ["Code", "Couleur"]
+COULEURS_READ_RANGE = "A2:B100"
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class PlanningError(Exception):
@@ -144,18 +155,39 @@ def parse_iso(s: str) -> date:
         raise PlanningError(f"Date invalide : {s!r}")
 
 
-def strip_affaire_marker(raw: str) -> tuple[str, str]:
-    """Sépare le texte affiché du numéro d'affaire éventuellement encodé en fin de cellule."""
-    m = AFFAIRE_MARKER_RE.search(raw)
-    if not m:
-        return raw, ""
-    return raw[: m.start()].rstrip(), m.group(1).strip()
+def strip_markers(raw: str) -> tuple[str, str, str]:
+    """Sépare le texte affiché du numéro d'affaire et de l'identifiant de
+    groupe éventuellement encodés en fin de cellule (dans n'importe quel
+    ordre)."""
+    text = raw
+    affaire = ""
+    group = ""
+    while True:
+        m = MARKER_RE.search(text)
+        if not m:
+            break
+        key, val = m.group(1), m.group(2).strip()
+        text = text[: m.start()].rstrip()
+        if key == "AFF":
+            affaire = val
+        else:
+            group = val
+    return text, affaire, group
 
 
-def with_affaire_marker(text: str, affaire: str) -> str:
+def with_markers(text: str, affaire: str = "", group: str = "") -> str:
     text = text.strip()
     affaire = (affaire or "").strip()
-    return f"{text} [AFF:{affaire}]" if affaire else text
+    group = (group or "").strip()
+    if affaire:
+        text = f"{text} [AFF:{affaire}]"
+    if group:
+        text = f"{text} [GRP:{group}]"
+    return text
+
+
+def new_group_id() -> str:
+    return secrets.token_hex(4)
 
 
 # Palette pour les tâches liées à une affaire mais dont le texte ne suit pas
@@ -173,24 +205,85 @@ def color_for_affaire(affaire: str) -> str:
     return AFFAIRE_COLOR_PALETTE[digest[0] % len(AFFAIRE_COLOR_PALETTE)]
 
 
-def cell_style(text: str, affaire: str = "") -> dict:
+def contrasting_fg(hex_color: str) -> str:
+    """Texte blanc ou sombre selon la luminosité du fond : une couleur de code
+    personnalisée par l'utilisateur peut être claire, contrairement aux
+    couleurs par défaut (toutes sombres) qui supportaient du blanc sans
+    vérification."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "#1f2430" if luminance > 0.6 else "#ffffff"
+
+
+def ensure_couleurs_sheet() -> None:
+    sheets_client.ensure_sheet(COULEURS_SHEET, COULEURS_HEADER)
+
+
+def read_color_overrides() -> dict[str, str]:
+    ensure_couleurs_sheet()
+    rows = sheets_client.get_range(COULEURS_READ_RANGE, sheet=COULEURS_SHEET)
+    overrides = {}
+    for r in rows:
+        code = (r[0].strip().upper() if len(r) > 0 and r[0] else "")
+        color = (r[1].strip() if len(r) > 1 and r[1] else "")
+        if code and HEX_COLOR_RE.match(color):
+            overrides[code] = color
+    return overrides
+
+
+def effective_codes() -> dict[str, tuple[str, str]]:
+    """CODES fusionné avec les couleurs personnalisées : la source des
+    libellés/couleurs par défaut reste le dict en dur, seule la couleur peut
+    être surchargée."""
+    overrides = read_color_overrides()
+    return {code: (label, overrides.get(code, color)) for code, (label, color) in CODES.items()}
+
+
+def set_color_override(code: str, color: str) -> None:
+    code = (code or "").strip().upper()
+    color = (color or "").strip()
+    if code not in CODES:
+        raise PlanningError(f"Code inconnu : {code!r}")
+    if not HEX_COLOR_RE.match(color):
+        raise PlanningError(f"Couleur invalide : {color!r}")
+    ensure_couleurs_sheet()
+    rows = sheets_client.get_range(COULEURS_READ_RANGE, sheet=COULEURS_SHEET)
+    for idx, r in enumerate(rows):
+        existing = (r[0].strip().upper() if len(r) > 0 and r[0] else "")
+        if existing == code:
+            sheets_client.update_range(f"B{2 + idx}", [[color]], sheet=COULEURS_SHEET)
+            return
+    sheets_client.append_row([code, color], sheet=COULEURS_SHEET)
+
+
+def cell_style(text: str, affaire: str = "", codes: dict | None = None) -> dict:
     """Détermine code/couleur d'affichage à partir du texte brut d'une tâche."""
+    codes = codes if codes is not None else CODES
     clean = " ".join(text.split())  # collapse les \n internes à une cellule
     upper = clean.upper()
     if upper in STATUT_STYLES:
         s = STATUT_STYLES[upper]
         return {"text": clean, "bg": s["bg"], "fg": s["fg"], "italic": s["italic"]}
 
+    # Détection sur la 1ère ligne seulement (comme `parse_task_parts`) : une
+    # tâche "MEC\nFin de montage…" a son code seul sur la 1ère ligne, sans
+    # séparateur avant le texte libre qui suit — le chercher dans `clean`
+    # (toutes les lignes aplaties en une seule, espaces compris) le manquait
+    # et affichait ces tâches en gris neutre au lieu de la couleur du code.
+    first_line = text.split("\n", 1)[0].strip()
     code = None
     for sep in (" - ", "-"):
-        if sep in clean:
-            candidate = clean.split(sep, 1)[0].strip().upper()
-            if candidate in CODES:
+        if sep in first_line:
+            candidate = first_line.split(sep, 1)[0].strip().upper()
+            if candidate in codes:
                 code = candidate
                 break
+    if not code and first_line.upper() in codes:
+        code = first_line.upper()
     if code:
-        _, color = CODES[code]
-        return {"text": clean, "bg": color, "fg": "#ffffff", "italic": False}
+        _, color = codes[code]
+        return {"text": clean, "bg": color, "fg": contrasting_fg(color), "italic": False}
 
     if affaire:
         return {"text": clean, "bg": color_for_affaire(affaire), "fg": "#ffffff", "italic": False}
@@ -317,7 +410,8 @@ def clear_task(row: int, dates: list[date]) -> None:
     sheets_client.clear_ranges(ranges)
 
 
-def build_grid(week_offset: int) -> dict:
+def build_grid(week_offset: int, codes: dict | None = None) -> dict:
+    codes = codes if codes is not None else CODES
     today = date.today()
     monday = today - timedelta(days=today.weekday())
     start_date = monday + timedelta(weeks=week_offset)
@@ -332,6 +426,7 @@ def build_grid(week_offset: int) -> dict:
             "week_offset": week_offset,
             "error": "Cette période est hors de la plage couverte par le planning.",
             "warning": None,
+            "groups": {},
         }
 
     num_days = min(DAYS_SHOWN, max_offset - start_offset + 1)
@@ -383,6 +478,11 @@ def build_grid(week_offset: int) -> dict:
         })
 
     employees = []
+    # Regroupe les fragments qui partagent le même identifiant de groupe
+    # (tâche affectée à plusieurs techniciens à la fois, cf. `with_markers`) :
+    # le front-end s'en sert pour retrouver, en éditant une instance, sur
+    # quelles autres lignes/techniciens propager le changement.
+    groups: dict[str, list[dict]] = {}
     current = None
     current_texts: list[str] = []
     block_start_idx = 0
@@ -412,8 +512,8 @@ def build_grid(week_offset: int) -> dict:
             k = j
             while k + 1 < num_days and texts[k + 1] == texts[j]:
                 k += 1
-            clean_text, affaire = strip_affaire_marker(texts[j])
-            style = cell_style(clean_text, affaire)
+            clean_text, affaire, group = strip_markers(texts[j])
+            style = cell_style(clean_text, affaire, codes)
             parts = parse_task_parts(clean_text)
             # Fragment tronqué = la même tâche continue hors fenêtre (à gauche
             # et/ou à droite) : on ne connaît pas sa vraie étendue, donc pas de
@@ -432,6 +532,7 @@ def build_grid(week_offset: int) -> dict:
                 "client": parts["client"],
                 "texte": parts["texte"],
                 "affaire": affaire,
+                "group": group,
                 "bg": style["bg"],
                 "fg": style["fg"],
                 "italic": style["italic"],
@@ -440,6 +541,13 @@ def build_grid(week_offset: int) -> dict:
                 "truncated": truncated,
                 "slot": slot,
             }
+            if group:
+                groups.setdefault(group, []).append({
+                    "employee": current["name"],
+                    "row": sheet_row,
+                    "date_start": days_info[j]["iso"],
+                    "date_end": days_info[k]["iso"],
+                })
             current["_max_slot"] = max(current["_max_slot"], slot)
             for jj in range(j, k + 1):
                 current["cells"][jj].append({
@@ -497,6 +605,7 @@ def build_grid(week_offset: int) -> dict:
                         "client": "",
                         "texte": "",
                         "affaire": "",
+                        "group": "",
                         "bg": None,
                         "fg": None,
                         "italic": False,
@@ -517,6 +626,7 @@ def build_grid(week_offset: int) -> dict:
         "week_offset": week_offset,
         "error": None,
         "warning": warning,
+        "groups": groups,
     }
 
 
@@ -577,7 +687,7 @@ def planning():
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
-    return render_template("planning.html", week_offset=week_offset, legend=CODES)
+    return render_template("planning.html", week_offset=week_offset, legend=effective_codes())
 
 
 @app.route("/api/grid")
@@ -586,16 +696,38 @@ def api_grid():
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
-    grid = build_grid(week_offset)
-    grid["legend"] = {code: {"label": label, "color": color} for code, (label, color) in CODES.items()}
+    codes = effective_codes()
+    grid = build_grid(week_offset, codes)
+    grid["legend"] = {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
     return jsonify(grid)
+
+
+@app.route("/api/legend/color", methods=["POST"])
+def api_legend_color():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        set_color_override(body.get("code"), body.get("color"))
+        codes = effective_codes()
+        legend = {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
+        return jsonify({"ok": True, "legend": legend})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/api/task/save", methods=["POST"])
 def api_task_save():
+    """Crée/édite une tâche, éventuellement affectée à plusieurs techniciens
+    à la fois. Chaque technicien occupe sa propre ligne (contrainte du
+    sheet — cf. docstring du module) ; les instances liées entre elles par un
+    même identifiant de groupe (`with_markers`) sont créées/mises à
+    jour/effacées ensemble ici pour rester synchronisées."""
     body = request.get_json(force=True, silent=True) or {}
     try:
-        employee = (body.get("employee") or "").strip()
+        employees = []
+        for e in (body.get("employees") or []):
+            e = (e or "").strip()
+            if e and e not in employees:
+                employees.append(e)
         text = (body.get("text") or "").strip()
         affaire = (body.get("affaire") or "").strip()
         d_start = parse_iso(body.get("date_start"))
@@ -603,35 +735,71 @@ def api_task_save():
         row = body.get("row")
         old_dates = [parse_iso(d) for d in (body.get("old_dates") or [])]
         check_span(old_dates)
+        group_id = (body.get("group_id") or "").strip()
 
-        if not employee:
+        members = []
+        for m in (body.get("members") or []):
+            m_employee = (m.get("employee") or "").strip()
+            if not m_employee:
+                continue
+            m_dates = [parse_iso(d) for d in (m.get("old_dates") or [])]
+            check_span(m_dates)
+            members.append({"employee": m_employee, "row": int(m.get("row")), "old_dates": m_dates})
+
+        if not employees:
             raise PlanningError("Technicien manquant.")
         if not text:
             raise PlanningError("Le texte de la tâche est vide.")
 
-        raw_text = with_affaire_marker(text, affaire)
+        # L'identifiant de groupe n'a de sens qu'à partir de 2 techniciens :
+        # s'il n'en reste qu'un après édition, on l'abandonne (la tâche
+        # redevient une tâche simple).
+        group_id = (group_id or new_group_id()) if len(employees) > 1 else ""
+        raw_text = with_markers(text, affaire, group_id)
 
-        if row is None:
-            place_task(employee, d_start, d_end, raw_text)
-        else:
+        blocks = read_employee_blocks()
+        new_dates = set(date_range(d_start, d_end))
+        cols = [col_for_date(d) for d in sorted(new_dates)]
+        col_start_letter, col_end_letter = col_letter(min(cols)), col_letter(max(cols))
+
+        # Instances déjà en place pour cette tâche (une par technicien déjà
+        # assigné) : la ligne éditée elle-même, plus les autres membres du
+        # groupe transmis par le front-end (cf. `groups` dans `build_grid`).
+        existing: dict[str, dict] = {}
+        if row is not None:
             row = int(row)
-            blocks = read_employee_blocks()
             owner = find_block_for_row(blocks, row)
-            new_dates = set(date_range(d_start, d_end))
-            if owner["name"] == employee:
-                stale = [d for d in old_dates if d not in new_dates]
+            existing[owner["name"]] = {"row": row, "old_dates": old_dates}
+        for m in members:
+            existing.setdefault(m["employee"], {"row": m["row"], "old_dates": m["old_dates"]})
+
+        for emp in employees:
+            inst = existing.pop(emp, None)
+            if inst is None:
+                place_task(emp, d_start, d_end, raw_text)
+                continue
+            owner = find_block_for_row(blocks, inst["row"])
+            if owner["name"] == emp:
+                stale = [d for d in inst["old_dates"] if d not in new_dates]
                 if stale:
-                    clear_task(row, stale)
-                cols = [col_for_date(d) for d in sorted(new_dates)]
-                col_start_letter, col_end_letter = col_letter(min(cols)), col_letter(max(cols))
+                    clear_task(inst["row"], stale)
                 sheets_client.update_range(
-                    f"{col_start_letter}{row}:{col_end_letter}{row}",
+                    f"{col_start_letter}{inst['row']}:{col_end_letter}{inst['row']}",
                     [[raw_text] * len(cols)],
                 )
             else:
-                if old_dates:
-                    clear_task(row, old_dates)
-                place_task(employee, d_start, d_end, raw_text)
+                # Ligne réattribuée entre-temps à un autre technicien (état
+                # front obsolète) : on libère l'ancien emplacement plutôt que
+                # d'écraser la tâche d'un tiers.
+                if inst["old_dates"]:
+                    clear_task(inst["row"], inst["old_dates"])
+                place_task(emp, d_start, d_end, raw_text)
+
+        # Techniciens qui étaient sur cette tâche et ont été désélectionnés.
+        for inst in existing.values():
+            if inst["old_dates"]:
+                clear_task(inst["row"], inst["old_dates"])
+
         return jsonify({"ok": True})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -639,14 +807,20 @@ def api_task_save():
 
 @app.route("/api/task/delete", methods=["POST"])
 def api_task_delete():
+    """Supprime une ou plusieurs instances d'une tâche (toutes les instances
+    liées d'une tâche multi-technicien, ou une seule pour une tâche simple)."""
     body = request.get_json(force=True, silent=True) or {}
     try:
-        row = int(body.get("row"))
-        dates = [parse_iso(d) for d in (body.get("dates") or [])]
-        if not dates:
-            raise PlanningError("Aucune date à supprimer.")
-        check_span(dates)
-        clear_task(row, dates)
+        instances = body.get("instances") or []
+        if not instances:
+            raise PlanningError("Aucune instance à supprimer.")
+        for inst in instances:
+            row = int(inst.get("row"))
+            dates = [parse_iso(d) for d in (inst.get("dates") or [])]
+            if not dates:
+                raise PlanningError("Aucune date à supprimer.")
+            check_span(dates)
+            clear_task(row, dates)
         return jsonify({"ok": True})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -677,7 +851,11 @@ def api_task_relocate():
 
         if mode == "move":
             clear_task(row, dates)
-        place_task(target_employee, d_start, d_end, with_affaire_marker(text, affaire))
+        # Le glisser-déposer agit toujours sur une seule instance : si la
+        # tâche source faisait partie d'un groupe multi-technicien, cette
+        # copie s'en détache (pas de propagation du déplacement aux autres
+        # techniciens du groupe).
+        place_task(target_employee, d_start, d_end, with_markers(text, affaire))
         return jsonify({"ok": True})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
