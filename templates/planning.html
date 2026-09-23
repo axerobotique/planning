@@ -27,11 +27,19 @@
     <summary>Légende des codes</summary>
     <div class="legend-items" id="legend-root">
       {% for code, (label, color) in legend.items() %}
-        <span class="legend-item">
+        <span class="legend-item" data-code="{{ code }}">
           <input type="color" class="swatch" value="{{ color }}" data-code="{{ code }}" title="Changer la couleur de {{ code }}">
-          {{ code }} — {{ label }}
+          <span class="legend-label">{{ code }} — {{ label }}</span>
+          <button type="button" class="legend-edit" data-code="{{ code }}" title="Renommer le libellé">✎</button>
+          <button type="button" class="legend-del" data-code="{{ code }}" title="Supprimer le code">×</button>
         </span>
       {% endfor %}
+    </div>
+    <div class="legend-add">
+      <input type="text" id="legend-new-code" placeholder="Code (ex: PRG)" maxlength="20">
+      <input type="text" id="legend-new-label" placeholder="Libellé">
+      <input type="color" id="legend-new-color" value="#2472a4" title="Couleur">
+      <button type="button" class="btn" id="legend-add-btn">+ Ajouter un code</button>
     </div>
   </details>
 

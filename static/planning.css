@@ -327,6 +327,45 @@ input.swatch::-webkit-color-swatch-wrapper { padding: 0; }
 input.swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
 input.swatch::-moz-color-swatch { border: none; border-radius: 2px; }
 
+.legend-edit, .legend-del {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 1px;
+  font-size: 12px;
+  line-height: 1;
+  color: #99a;
+}
+.legend-edit:hover { color: #2472a4; }
+.legend-del:hover { color: #9c1c12; }
+
+.legend-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.legend-add input[type="text"] {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+#legend-new-code { width: 110px; text-transform: uppercase; }
+#legend-new-label { width: 160px; }
+.legend-add input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.legend-add .btn { padding: 5px 10px; }
+
 .foot {
   text-align: center;
   color: #99a;

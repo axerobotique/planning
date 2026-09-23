@@ -1,10 +1,15 @@
 WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
  * Running on all addresses (0.0.0.0)
  * Running on http://127.0.0.1:5050
- * Running on http://10.116.223.10:5050
+ * Running on http://192.168.1.33:5050
 Press CTRL+C to quit
-127.0.0.1 - - [23/Sep/2026 16:23:59] "GET /api/grid?s=0 HTTP/1.1" 200 -
-127.0.0.1 - - [23/Sep/2026 16:24:10] "POST /api/legend/color HTTP/1.1" 200 -
-127.0.0.1 - - [23/Sep/2026 16:24:10] "POST /api/legend/color HTTP/1.1" 400 -
-127.0.0.1 - - [23/Sep/2026 16:24:10] "POST /api/legend/color HTTP/1.1" 400 -
-127.0.0.1 - - [23/Sep/2026 16:24:16] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:46:38] "GET /api/grid?s=0 HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:46:51] "POST /api/codes/save HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:46:51] "POST /api/codes/save HTTP/1.1" 400 -
+127.0.0.1 - - [23/Sep/2026 18:46:51] "POST /api/codes/save HTTP/1.1" 400 -
+127.0.0.1 - - [23/Sep/2026 18:46:52] "POST /api/codes/delete HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:46:52] "POST /api/codes/delete HTTP/1.1" 400 -
+127.0.0.1 - - [23/Sep/2026 18:46:57] "POST /api/codes/save HTTP/1.1" 400 -
+127.0.0.1 - - [23/Sep/2026 18:47:13] "POST /api/codes/save HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:47:14] "POST /api/codes/save HTTP/1.1" 200 -
+127.0.0.1 - - [23/Sep/2026 18:47:16] "POST /api/codes/delete HTTP/1.1" 200 -

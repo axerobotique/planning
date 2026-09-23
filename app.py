@@ -61,21 +61,26 @@ MAX_TASK_SPAN_DAYS = 180
 
 JOURS_COURTS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 
-CODES = {
-    "ROB": ("Robotique", "#3b6fe0"),
-    "CAB": ("Câblage", "#8e44ad"),
-    "ELE": ("Électrique", "#e08325"),
-    "AUT": ("Automatisme", "#178a76"),
-    "MEC": ("Mécanique", "#6b7280"),
-    "MAP": ("Mise au point", "#c0392b"),
-    "MES": ("Mise en service", "#2472a4"),
-    "DEP": ("Dépannage", "#b3541e"),
-    "DEV": ("Développement", "#6c5ce7"),
-    "FIT": ("Montage/Fitting", "#00897b"),
-    "RDV": ("Rendez-vous", "#546e7a"),
-    "SN": ("SAV / Support", "#00838f"),
-    "ASTREINTE": ("Astreinte", "#c2185b"),
-}
+# Amorçage de l'onglet "Codes" (cf. plus bas) à sa création : au-delà de ce
+# premier amorçage, le sheet est la seule source de vérité pour les codes —
+# ceci ne sert plus qu'à peupler l'onglet une fois. Palette par famille :
+# ROB/CAB/ELE/AUT/DEV en bleus froids, MAP/MES/DEP en couleurs chaudes.
+DEFAULT_CODES = [
+    ("ROB", "Robotique", "#2563eb"),
+    ("CAB", "Câblage", "#0ea5e9"),
+    ("ELE", "Électrique", "#0891b2"),
+    ("AUT", "Automatisme", "#1e40af"),
+    ("DEV", "Développement", "#4338ca"),
+    ("MEC", "Mécanique", "#6b7280"),
+    ("MAP", "Mise au point", "#dc2626"),
+    ("MES", "Mise en service", "#ea580c"),
+    ("DEP", "Dépannage", "#b45309"),
+    ("FIT", "Montage/Fitting", "#00897b"),
+    ("RDV", "Rendez-vous", "#546e7a"),
+    ("SN", "SAV / Support", "#00838f"),
+    ("ASTREINTE", "Astreinte", "#c2185b"),
+]
+DEFAULT_CODES_MAP = {code: (label, color) for code, label, color in DEFAULT_CODES}
 STATUT_STYLES = {
     "FÉRIÉ": {"bg": "#eceff1", "fg": "#607d8b", "italic": True},
     "OK": {"bg": "#e6f4ea", "fg": "#1e7e34", "italic": False},
@@ -96,15 +101,19 @@ TACHES_SHEET = "Taches"
 TACHES_HEADER = ["Numéro affaire", "Texte", "Fait", "Assigné"]
 TACHES_READ_RANGE = "A2:D2000"
 
-# Couleurs de la légende (CODES ci-dessus) personnalisables depuis l'UI :
-# les personnalisations sont stockées dans un onglet séparé plutôt que codées
-# en dur, pour survivre aux redéploiements et être partagées par tous (même
-# principe que l'onglet "Taches"). CODES reste la source des libellés et des
-# couleurs par défaut ; seule la couleur peut être surchargée.
-COULEURS_SHEET = "Couleurs"
-COULEURS_HEADER = ["Code", "Couleur"]
-COULEURS_READ_RANGE = "A2:B100"
+# Les codes de la légende (ROB, MEC, ...) sont gérés depuis un onglet dédié
+# plutôt que codés en dur : ajout/édition/suppression depuis l'UI, partagés
+# par tous et persistants entre redéploiements (même principe que l'onglet
+# "Taches"). DEFAULT_CODES ci-dessus ne sert plus qu'à amorcer cet onglet à
+# sa création.
+CODES_SHEET = "Codes"
+CODES_HEADER = ["Code", "Libellé", "Couleur"]
+CODES_READ_RANGE = "A2:C300"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# Identifiant de code : lettres/chiffres seulement, sans espace ni tiret — un
+# "-" casserait le parsing "CODE - Client" / "CODE-Client" qui isole le code
+# en tête de cellule (cf. `cell_style`/`parse_task_parts`).
+CODE_ID_RE = re.compile(r"^[A-Z0-9ÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]{1,20}$")
 
 
 class PlanningError(Exception):
@@ -216,50 +225,94 @@ def contrasting_fg(hex_color: str) -> str:
     return "#1f2430" if luminance > 0.6 else "#ffffff"
 
 
-def ensure_couleurs_sheet() -> None:
-    sheets_client.ensure_sheet(COULEURS_SHEET, COULEURS_HEADER)
+# True une fois l'amorçage de l'onglet "Codes" vérifié pour ce process, pour
+# ne pas relire le sheet à chaque requête juste pour ça (même principe que
+# `_taches_migrated`).
+_codes_seeded = False
 
 
-def read_color_overrides() -> dict[str, str]:
-    ensure_couleurs_sheet()
-    rows = sheets_client.get_range(COULEURS_READ_RANGE, sheet=COULEURS_SHEET)
-    overrides = {}
+def ensure_codes_sheet() -> None:
+    global _codes_seeded
+    sheets_client.ensure_sheet(CODES_SHEET, CODES_HEADER)
+    if _codes_seeded:
+        return
+    rows = sheets_client.get_range(CODES_READ_RANGE, sheet=CODES_SHEET)
+    if not rows:
+        sheets_client.update_range(
+            f"A2:C{1 + len(DEFAULT_CODES)}",
+            [[code, label, color] for code, label, color in DEFAULT_CODES],
+            sheet=CODES_SHEET,
+        )
+    _codes_seeded = True
+
+
+def read_codes() -> dict[str, tuple[str, str]]:
+    """dict code -> (libellé, couleur), lu depuis l'onglet "Codes" — seule
+    source de vérité pour la légende (plus de dict en dur, cf. DEFAULT_CODES
+    qui ne sert qu'à l'amorçage)."""
+    ensure_codes_sheet()
+    rows = sheets_client.get_range(CODES_READ_RANGE, sheet=CODES_SHEET)
+    codes: dict[str, tuple[str, str]] = {}
     for r in rows:
         code = (r[0].strip().upper() if len(r) > 0 and r[0] else "")
-        color = (r[1].strip() if len(r) > 1 and r[1] else "")
-        if code and HEX_COLOR_RE.match(color):
-            overrides[code] = color
-    return overrides
+        if not code:
+            continue
+        label = (r[1].strip() if len(r) > 1 and r[1] else code)
+        color = (r[2].strip() if len(r) > 2 and r[2] else "")
+        if not HEX_COLOR_RE.match(color):
+            color = "#6b7280"
+        codes[code] = (label, color)
+    return codes
 
 
-def effective_codes() -> dict[str, tuple[str, str]]:
-    """CODES fusionné avec les couleurs personnalisées : la source des
-    libellés/couleurs par défaut reste le dict en dur, seule la couleur peut
-    être surchargée."""
-    overrides = read_color_overrides()
-    return {code: (label, overrides.get(code, color)) for code, (label, color) in CODES.items()}
+def validate_code_id(raw: str) -> str:
+    code = (raw or "").strip().upper()
+    if not CODE_ID_RE.match(code):
+        raise PlanningError(
+            f"Code invalide : {raw!r} (lettres/chiffres uniquement, sans espace ni tiret)."
+        )
+    return code
 
 
-def set_color_override(code: str, color: str) -> None:
-    code = (code or "").strip().upper()
+def save_code(raw_code: str, label: str, color: str) -> None:
+    """Crée le code s'il n'existe pas encore, sinon met à jour son libellé et
+    sa couleur. L'identifiant du code lui-même n'est jamais modifié une fois
+    créé (renommer casserait la reconnaissance des tâches déjà écrites dans
+    le sheet sous l'ancien code) : pour "renommer", il faut créer le nouveau
+    code puis supprimer l'ancien."""
+    code = validate_code_id(raw_code)
+    label = (label or "").strip()
     color = (color or "").strip()
-    if code not in CODES:
-        raise PlanningError(f"Code inconnu : {code!r}")
+    if not label:
+        raise PlanningError("Libellé manquant.")
     if not HEX_COLOR_RE.match(color):
         raise PlanningError(f"Couleur invalide : {color!r}")
-    ensure_couleurs_sheet()
-    rows = sheets_client.get_range(COULEURS_READ_RANGE, sheet=COULEURS_SHEET)
+
+    ensure_codes_sheet()
+    rows = sheets_client.get_range(CODES_READ_RANGE, sheet=CODES_SHEET)
     for idx, r in enumerate(rows):
         existing = (r[0].strip().upper() if len(r) > 0 and r[0] else "")
         if existing == code:
-            sheets_client.update_range(f"B{2 + idx}", [[color]], sheet=COULEURS_SHEET)
+            sheets_client.update_range(f"A{2 + idx}:C{2 + idx}", [[code, label, color]], sheet=CODES_SHEET)
             return
-    sheets_client.append_row([code, color], sheet=COULEURS_SHEET)
+    sheets_client.append_row([code, label, color], sheet=CODES_SHEET)
+
+
+def delete_code(raw_code: str) -> None:
+    code = validate_code_id(raw_code)
+    ensure_codes_sheet()
+    rows = sheets_client.get_range(CODES_READ_RANGE, sheet=CODES_SHEET)
+    for idx, r in enumerate(rows):
+        existing = (r[0].strip().upper() if len(r) > 0 and r[0] else "")
+        if existing == code:
+            sheets_client.clear_ranges([f"A{2 + idx}:C{2 + idx}"], sheet=CODES_SHEET)
+            return
+    raise PlanningError(f"Code inconnu : {code!r}")
 
 
 def cell_style(text: str, affaire: str = "", codes: dict | None = None) -> dict:
     """Détermine code/couleur d'affichage à partir du texte brut d'une tâche."""
-    codes = codes if codes is not None else CODES
+    codes = codes if codes is not None else DEFAULT_CODES_MAP
     clean = " ".join(text.split())  # collapse les \n internes à une cellule
     upper = clean.upper()
     if upper in STATUT_STYLES:
@@ -295,13 +348,14 @@ def cell_style(text: str, affaire: str = "", codes: dict | None = None) -> dict:
     return {"text": clean, "bg": "#e9edf2", "fg": "#33404d", "italic": False}
 
 
-def parse_task_parts(clean_text: str) -> dict:
+def parse_task_parts(clean_text: str, codes: dict | None = None) -> dict:
     """Décompose le texte brut d'une tâche (marqueur affaire déjà retiré, \n
     internes conservés) en (code, client, texte) pour l'édition/l'affichage
     structuré : 1ère ligne "CODE - Client" (ou "CODE-Client"), lignes
     suivantes = texte libre. Sans code reconnu, tout va dans `client` (aucune
     perte d'info) : c'est ce qui permet d'éditer aussi les anciennes tâches
     qui ne suivent pas la convention, ou les statuts (OK/FÉRIÉ/CONGÉS)."""
+    codes = codes if codes is not None else DEFAULT_CODES_MAP
     first_line, _, rest = clean_text.partition("\n")
     first_line = first_line.strip()
     texte = rest.strip()
@@ -313,11 +367,11 @@ def parse_task_parts(clean_text: str) -> dict:
     for sep in (" - ", "-"):
         if sep in first_line:
             candidate = first_line.split(sep, 1)[0].strip().upper()
-            if candidate in CODES:
+            if candidate in codes:
                 code = candidate
                 client = first_line.split(sep, 1)[1].strip()
                 break
-    if not code and first_line.upper() in CODES:
+    if not code and first_line.upper() in codes:
         # Code seul, sans client (ex: "AUT" tout seul, pas de séparateur à
         # trouver) : sans ce cas, un aller-retour édition→enregistrement le
         # transformait silencieusement en "client" sans code.
@@ -411,7 +465,7 @@ def clear_task(row: int, dates: list[date]) -> None:
 
 
 def build_grid(week_offset: int, codes: dict | None = None) -> dict:
-    codes = codes if codes is not None else CODES
+    codes = codes if codes is not None else DEFAULT_CODES_MAP
     today = date.today()
     monday = today - timedelta(days=today.weekday())
     start_date = monday + timedelta(weeks=week_offset)
@@ -514,7 +568,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                 k += 1
             clean_text, affaire, group = strip_markers(texts[j])
             style = cell_style(clean_text, affaire, codes)
-            parts = parse_task_parts(clean_text)
+            parts = parse_task_parts(clean_text, codes)
             # Fragment tronqué = la même tâche continue hors fenêtre (à gauche
             # et/ou à droite) : on ne connaît pas sa vraie étendue, donc pas de
             # glisser-déposer dessus (cf. bug de duplication sur ASTREINTE).
@@ -687,7 +741,7 @@ def planning():
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
-    return render_template("planning.html", week_offset=week_offset, legend=effective_codes())
+    return render_template("planning.html", week_offset=week_offset, legend=read_codes())
 
 
 @app.route("/api/grid")
@@ -696,20 +750,35 @@ def api_grid():
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
-    codes = effective_codes()
+    codes = read_codes()
     grid = build_grid(week_offset, codes)
     grid["legend"] = {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
     return jsonify(grid)
 
 
-@app.route("/api/legend/color", methods=["POST"])
-def api_legend_color():
+def _legend_json() -> dict:
+    codes = read_codes()
+    return {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
+
+
+@app.route("/api/codes/save", methods=["POST"])
+def api_codes_save():
+    """Crée un nouveau code, ou met à jour le libellé/couleur d'un code
+    existant (cf. `save_code` — l'identifiant du code n'est jamais renommé)."""
     body = request.get_json(force=True, silent=True) or {}
     try:
-        set_color_override(body.get("code"), body.get("color"))
-        codes = effective_codes()
-        legend = {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
-        return jsonify({"ok": True, "legend": legend})
+        save_code(body.get("code"), body.get("label"), body.get("color"))
+        return jsonify({"ok": True, "legend": _legend_json()})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/codes/delete", methods=["POST"])
+def api_codes_delete():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        delete_code(body.get("code"))
+        return jsonify({"ok": True, "legend": _legend_json()})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

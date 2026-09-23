@@ -23,6 +23,10 @@
   const affaireTaskNewInput = document.getElementById("affaire-task-new");
   const affaireTaskNewAssignee = document.getElementById("affaire-task-new-assignee");
   const affaireTaskAddBtn = document.getElementById("affaire-task-add-btn");
+  const legendNewCode = document.getElementById("legend-new-code");
+  const legendNewLabel = document.getElementById("legend-new-label");
+  const legendNewColor = document.getElementById("legend-new-color");
+  const legendAddBtn = document.getElementById("legend-add-btn");
 
   let weekOffset = window.PLANNING_WEEK_OFFSET || 0;
   let currentData = null;
@@ -132,33 +136,103 @@
   }
 
   // La légende est re-rendue à chaque chargement (pas seulement au premier
-  // rendu Jinja) pour refléter tout de suite une couleur changée par un
-  // autre utilisateur — cf. le sélecteur natif <input type="color"> posé sur
-  // chaque swatch, qui persiste son changement via /api/legend/color.
+  // rendu Jinja) pour refléter tout de suite un code ajouté/édité/supprimé
+  // par un autre utilisateur — les codes sont gérés dans l'onglet "Codes" du
+  // sheet, plus de dict en dur (cf. `read_codes` côté serveur).
   function renderLegend(legend) {
     if (!legend) return;
     legendRoot.innerHTML = Object.entries(legend).map(([code, info]) => `
-      <span class="legend-item">
+      <span class="legend-item" data-code="${esc(code)}">
         <input type="color" class="swatch" value="${info.color}" data-code="${esc(code)}" title="Changer la couleur de ${esc(code)}">
-        ${esc(code)} — ${esc(info.label)}
+        <span class="legend-label">${esc(code)} — ${esc(info.label)}</span>
+        <button type="button" class="legend-edit" data-code="${esc(code)}" title="Renommer le libellé">✎</button>
+        <button type="button" class="legend-del" data-code="${esc(code)}" title="Supprimer le code">×</button>
       </span>`).join("");
 
     legendRoot.querySelectorAll("input.swatch").forEach((inp) => {
       inp.addEventListener("change", async () => {
         const code = inp.dataset.code;
+        const info = legend[code];
+        await saveCode(code, info.label, inp.value, `Couleur de ${code} mise à jour.`);
+      });
+    });
+    legendRoot.querySelectorAll(".legend-edit").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const code = btn.dataset.code;
+        const info = legend[code];
+        const label = prompt(`Libellé pour ${code} :`, info.label);
+        if (label == null) return;
+        const trimmed = label.trim();
+        if (!trimmed || trimmed === info.label) return;
+        await saveCode(code, trimmed, info.color, `Libellé de ${code} mis à jour.`);
+      });
+    });
+    legendRoot.querySelectorAll(".legend-del").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const code = btn.dataset.code;
+        if (!confirm(`Supprimer le code ${code} ? Les tâches déjà écrites avec ce code perdront sa couleur/libellé.`)) return;
         try {
-          const d = await fetchJSON("/api/legend/color", {
+          const d = await fetchJSON("/api/codes/delete", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code, color: inp.value }),
+            body: JSON.stringify({ code }),
           });
           if (!d.ok) throw new Error(d.error || "Erreur.");
-          showToast(`Couleur de ${code} mise à jour.`);
+          showToast(`Code ${code} supprimé.`);
           await loadGrid();
         } catch (e) {
           showToast(e.message || "Erreur.", "danger");
         }
       });
     });
+
+    fillCodeOptions(legend, fCode.value);
+  }
+
+  async function saveCode(code, label, color, successMsg) {
+    try {
+      const d = await fetchJSON("/api/codes/save", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, label, color }),
+      });
+      if (!d.ok) throw new Error(d.error || "Erreur.");
+      showToast(successMsg);
+      await loadGrid();
+    } catch (e) {
+      showToast(e.message || "Erreur.", "danger");
+    }
+  }
+
+  async function addCode() {
+    const code = legendNewCode.value.trim().toUpperCase();
+    const label = legendNewLabel.value.trim();
+    const color = legendNewColor.value;
+    if (!code || !label) {
+      showToast("Renseigne un code et un libellé.", "danger");
+      return;
+    }
+    legendAddBtn.disabled = true;
+    try {
+      await saveCode(code, label, color, `Code ${code} ajouté.`);
+      legendNewCode.value = "";
+      legendNewLabel.value = "";
+    } finally {
+      legendAddBtn.disabled = false;
+    }
+  }
+
+  legendAddBtn.addEventListener("click", addCode);
+  legendNewLabel.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addCode(); }
+  });
+
+  // Options du <select> Code de la modale, tenues à jour à chaque rendu de
+  // légende (plutôt que figées au chargement Jinja) : sans ça, un code
+  // ajouté/supprimé après coup n'apparaissait pas/restait sélectionnable
+  // dans la modale tant que la page n'était pas rechargée.
+  function fillCodeOptions(legend, selected) {
+    fCode.innerHTML = '<option value="">—</option>' + Object.entries(legend).map(([code, info]) =>
+      `<option value="${esc(code)}" ${code === selected ? "selected" : ""}>${esc(code)} — ${esc(info.label)}</option>`
+    ).join("");
   }
 
   function renderGrid(data) {
