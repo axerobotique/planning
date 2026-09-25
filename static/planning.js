@@ -248,6 +248,21 @@
       return;
     }
 
+    // Regroupe les jours consécutifs de même semaine ISO sous un seul <th
+    // colspan> : la fenêtre affichée commence toujours un lundi (cf.
+    // `build_grid`) mais peut se terminer avant un dimanche (fin de la plage
+    // couverte par le sheet), d'où un regroupement par valeur plutôt qu'un
+    // colspan fixe à 7.
+    const weekGroups = [];
+    data.days.forEach((d) => {
+      const last = weekGroups[weekGroups.length - 1];
+      if (last && last.week === d.week) last.span += 1;
+      else weekGroups.push({ week: d.week, span: 1 });
+    });
+    const weekRow = weekGroups.map((g) =>
+      `<th class="col-week" colspan="${g.span}">Semaine ${g.week}</th>`
+    ).join("");
+
     const thead = data.days.map((d) => {
       const cls = ["col-day"];
       if (d.is_today) cls.push("is-today");
@@ -277,7 +292,15 @@
           return `<td class="${cls.join(" ")}" data-date="${d.iso}" data-employee="${esc(emp.name)}">${html}</td>`;
         }).join("");
         const nameCell = s === 0
-          ? `<th class="col-name" rowspan="${slotCount}">${esc(emp.name)}</th>`
+          ? `<th class="col-name" rowspan="${slotCount}">
+              <div class="emp-name-wrap">
+                <span class="emp-name">${esc(emp.name)}</span>
+                <span class="emp-row-controls">
+                  <button type="button" class="emp-row-btn emp-row-remove" data-employee="${esc(emp.name)}" title="Supprimer une ligne">−</button>
+                  <button type="button" class="emp-row-btn emp-row-add" data-employee="${esc(emp.name)}" title="Ajouter une ligne">+</button>
+                </span>
+              </div>
+            </th>`
           : "";
         trs += `<tr class="${altCls}" data-employee="${esc(emp.name)}">${nameCell}${cells}</tr>`;
       }
@@ -285,7 +308,10 @@
     }).join("");
 
     gridRoot.innerHTML = `<table class="planning">
-      <thead><tr class="row-date"><th class="col-name"></th>${thead}</tr></thead>
+      <thead>
+        <tr class="row-week"><th class="col-name"></th>${weekRow}</tr>
+        <tr class="row-date"><th class="col-name"></th>${thead}</tr>
+      </thead>
       <tbody>${rows}</tbody>
     </table>`;
 
@@ -334,6 +360,44 @@
   }
 
   function bindGridEvents() {
+    gridRoot.querySelectorAll(".emp-row-add").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const employee = btn.dataset.employee;
+        btn.disabled = true;
+        try {
+          const d = await fetchJSON("/api/employee/row/add", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ employee }),
+          });
+          if (!d.ok) throw new Error(d.error || "Erreur.");
+          await loadGrid();
+        } catch (err) {
+          showToast(err.message || "Erreur.", "danger");
+          btn.disabled = false;
+        }
+      });
+    });
+
+    gridRoot.querySelectorAll(".emp-row-remove").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const employee = btn.dataset.employee;
+        btn.disabled = true;
+        try {
+          const d = await fetchJSON("/api/employee/row/remove", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ employee }),
+          });
+          if (!d.ok) throw new Error(d.error || "Erreur.");
+          await loadGrid();
+        } catch (err) {
+          showToast(err.message || "Erreur.", "danger");
+          btn.disabled = false;
+        }
+      });
+    });
+
     gridRoot.querySelectorAll(".task-expand").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();

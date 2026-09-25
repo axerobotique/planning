@@ -464,6 +464,33 @@ def clear_task(row: int, dates: list[date]) -> None:
     sheets_client.clear_ranges(ranges)
 
 
+def add_employee_row(employee: str) -> None:
+    """Ajoute une ligne (créneau) vide à la fin du bloc du technicien, pour lui
+    permettre d'accueillir une tâche supplémentaire en parallèle."""
+    blocks = read_employee_blocks()
+    block = find_block(blocks, employee)
+    sheets_client.insert_row_before(block["end_row"] + 1)
+
+
+def remove_employee_row(employee: str) -> None:
+    """Supprime la dernière ligne (créneau) du bloc du technicien, à condition
+    qu'elle soit vide sur toute la largeur du sheet (pas seulement la fenêtre
+    affichée) et qu'il en reste au moins une après suppression."""
+    blocks = read_employee_blocks()
+    block = find_block(blocks, employee)
+    block_height = block["end_row"] - block["start_row"] + 1
+    if block_height <= 1:
+        raise PlanningError("Impossible de supprimer la dernière ligne de ce technicien.")
+
+    last_row = block["end_row"]
+    last_col_letter = col_letter(sheet_last_col())
+    row_vals = sheets_client.get_range(f"A{last_row}:{last_col_letter}{last_row}")
+    if row_vals and any((c or "").strip() for c in row_vals[0]):
+        raise PlanningError("Cette ligne contient une tâche — impossible de la supprimer.")
+
+    sheets_client.delete_row(last_row)
+
+
 def build_grid(week_offset: int, codes: dict | None = None) -> dict:
     codes = codes if codes is not None else DEFAULT_CODES_MAP
     today = date.today()
@@ -529,6 +556,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
             "is_today": d == today,
             "is_weekend": d.weekday() >= 5,
             "new_week": d.weekday() == 0,
+            "week": d.isocalendar()[1],
         })
 
     employees = []
@@ -925,6 +953,32 @@ def api_task_relocate():
         # copie s'en détache (pas de propagation du déplacement aux autres
         # techniciens du groupe).
         place_task(target_employee, d_start, d_end, with_markers(text, affaire))
+        return jsonify({"ok": True})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/employee/row/add", methods=["POST"])
+def api_employee_row_add():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        employee = (body.get("employee") or "").strip()
+        if not employee:
+            raise PlanningError("Technicien manquant.")
+        add_employee_row(employee)
+        return jsonify({"ok": True})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/employee/row/remove", methods=["POST"])
+def api_employee_row_remove():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        employee = (body.get("employee") or "").strip()
+        if not employee:
+            raise PlanningError("Technicien manquant.")
+        remove_employee_row(employee)
         return jsonify({"ok": True})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400

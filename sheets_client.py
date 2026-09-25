@@ -243,3 +243,26 @@ def insert_row_before(sheet_row_1based: int, sheet: str | None = None) -> None:
     ).execute()
     _sheet_meta_cache.pop("all", None)  # rowCount a changé
     _invalidate_cache()
+
+
+def delete_row(sheet_row_1based: int, sheet: str | None = None) -> None:
+    """Supprime la ligne 1-based donnée (les lignes suivantes remontent d'une position)."""
+    _get_service().spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "requests": [
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": get_sheet_id(sheet),
+                            "dimension": "ROWS",
+                            "startIndex": sheet_row_1based - 1,
+                            "endIndex": sheet_row_1based,
+                        }
+                    }
+                }
+            ]
+        },
+    ).execute()
+    _sheet_meta_cache.pop("all", None)  # rowCount a changé
+    _invalidate_cache()

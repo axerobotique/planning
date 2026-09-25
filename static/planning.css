@@ -99,6 +99,39 @@ table.planning th, table.planning td {
 
 thead .col-name { background: #f7f8fa; z-index: 15; }
 
+.emp-name-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.emp-row-controls {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.col-name:hover .emp-row-controls { opacity: 1; }
+
+.emp-row-btn {
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+  color: #556;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.emp-row-btn:hover { background: #eef0f3; }
+.emp-row-btn:disabled { opacity: 0.5; cursor: default; }
+
 /* Zébrage par bloc technicien (et non par ligne/créneau) : un technicien
    peut occuper plusieurs lignes <tr> (une par créneau), elles doivent
    garder la même couleur pour lire un seul bloc, cf. .emp-a/.emp-b posées
@@ -117,6 +150,17 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 
 .col-day .dow { font-weight: 600; font-size: 11px; color: #667; }
 .col-day .date { font-size: 12px; }
+
+.col-week {
+  text-align: center;
+  background: #eef0f3;
+  color: #667;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: 4px 6px;
+  border-left: 2px solid #b7bec9;
+}
 
 .week-start { border-left: 2px solid #b7bec9; }
 
