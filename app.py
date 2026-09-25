@@ -572,12 +572,18 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
         sheet_row = FIRST_EMPLOYEE_ROW + idx
         name = (name_row[0] if name_row else "").strip()
         if name:
-            current = {"name": name, "cells": [[] for _ in range(num_days)], "_max_slot": -1}
+            current = {"name": name, "cells": [[] for _ in range(num_days)], "_block_height": 0}
             employees.append(current)
             block_start_idx = idx
         if current is None:
             continue
         slot = idx - block_start_idx
+        # Compté sur CHAQUE ligne du bloc, y compris celles sans aucune tâche
+        # dans la fenêtre affichée : le nombre de lignes affichées doit
+        # correspondre au nombre de lignes réellement réservées dans le sheet
+        # pour ce technicien (cf. bouton +/- ligne), pas seulement à celles
+        # qui contiennent une tâche cette semaine.
+        current["_block_height"] = slot + 1
         r = data_rows[idx] if idx < len(data_rows) else []
         texts = [(r[j].strip() if j < len(r) and r[j] else "") for j in range(num_days)]
         before_val = (before_rows[idx][0].strip() if idx < len(before_rows) and before_rows[idx] else "")
@@ -630,7 +636,6 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                     "date_start": days_info[j]["iso"],
                     "date_end": days_info[k]["iso"],
                 })
-            current["_max_slot"] = max(current["_max_slot"], slot)
             for jj in range(j, k + 1):
                 current["cells"][jj].append({
                     **frag_base,
@@ -643,41 +648,34 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
     # plus longue (en jours, sur la période affichée) en haut, la plus
     # courte en bas. La mesure retenue par slot est l'étendue max d'un seul
     # fragment (pas la somme sur toute la période), pour rester intuitif
-    # visuellement.
+    # visuellement. Tous les slots physiques du bloc sont inclus (span 0 par
+    # défaut), même sans tâche cette semaine, pour finir en bas dans leur
+    # ordre d'origine plutôt que de disparaître (cf. `_block_height`).
     for emp in employees:
-        slot_span: dict[int, int] = {}
+        block_height = emp["_block_height"]
+        slot_span: dict[int, int] = {s: 0 for s in range(block_height)}
         for day_frags in emp["cells"]:
             for f in day_frags:
                 span = (date.fromisoformat(f["date_end"]) - date.fromisoformat(f["date_start"])).days + 1
                 if span > slot_span.get(f["slot"], 0):
                     slot_span[f["slot"]] = span
-        if slot_span:
-            ordered_slots = sorted(slot_span, key=lambda s: (-slot_span[s], s))
-            slot_map = {old: new for new, old in enumerate(ordered_slots)}
-            for day_frags in emp["cells"]:
-                for f in day_frags:
-                    f["slot"] = slot_map[f["slot"]]
-            # Le tri peut avoir "compacté" les numéros de slot (une ligne
-            # physique sans aucune tâche cette période n'apparaît dans aucun
-            # fragment) : _max_slot doit refléter le nouveau compte, sinon la
-            # boucle de placeholders ci-dessous ajoute des lignes vides
-            # superflues en bas de bloc.
-            emp["_max_slot"] = len(ordered_slots) - 1
+        ordered_slots = sorted(slot_span, key=lambda s: (-slot_span[s], s))
+        slot_map = {old: new for new, old in enumerate(ordered_slots)}
+        for day_frags in emp["cells"]:
+            for f in day_frags:
+                f["slot"] = slot_map[f["slot"]]
 
     # Une ligne technicien sans tâche un jour donné ne doit pas laisser la
     # ligne suivante remonter prendre sa place visuelle : ça décale les
     # tâches d'un jour à l'autre et casse l'alignement horizontal. On
-    # réserve donc un "placeholder" invisible à chaque emplacement (slot) de
-    # ligne source qui a au moins une tâche quelque part dans la fenêtre
-    # affichée, pour les jours où cette ligne précise est vide.
+    # réserve donc un "placeholder" invisible à chaque ligne physiquement
+    # réservée au technicien dans le sheet, pour les jours où cette ligne
+    # précise est vide — même si elle n'a aucune tâche du tout cette semaine.
     for emp in employees:
-        max_slot = emp.pop("_max_slot")
-        if max_slot < 0:
-            emp["rows"] = 1
-            continue
+        block_height = emp.pop("_block_height")
         for jj, day_frags in enumerate(emp["cells"]):
             present = {f["slot"] for f in day_frags}
-            for slot in range(max_slot + 1):
+            for slot in range(block_height):
                 if slot not in present:
                     day_frags.append({
                         "row": None,
@@ -700,7 +698,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                         "placeholder": True,
                     })
             day_frags.sort(key=lambda f: f["slot"])
-        emp["rows"] = max_slot + 1
+        emp["rows"] = block_height
 
     return {
         "employees": employees,
