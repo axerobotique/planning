@@ -13,7 +13,9 @@
       <button class="btn" id="btn-prev">&larr; Semaine préc.</button>
       <button class="btn btn-primary" id="btn-today">Aujourd'hui</button>
       <button class="btn" id="btn-next">Semaine suiv. &rarr;</button>
+      <button class="btn" id="btn-zoom" title="Afficher plus/moins de semaines">&minus; Dézoomer</button>
       <button class="btn btn-primary" id="btn-new">+ Nouvelle tâche</button>
+      <a class="btn" href="{{ url_for('parametres') }}" title="Gérer les codes et leurs couleurs">&#9881; Paramètres</a>
     </nav>
   </header>
 
@@ -28,19 +30,12 @@
     <div class="legend-items" id="legend-root">
       {% for code, (label, color) in legend.items() %}
         <span class="legend-item" data-code="{{ code }}">
-          <input type="color" class="swatch" value="{{ color }}" data-code="{{ code }}" title="Changer la couleur de {{ code }}">
+          <span class="swatch" style="background:{{ color }}"></span>
           <span class="legend-label">{{ code }} — {{ label }}</span>
-          <button type="button" class="legend-edit" data-code="{{ code }}" title="Renommer le libellé">✎</button>
-          <button type="button" class="legend-del" data-code="{{ code }}" title="Supprimer le code">×</button>
         </span>
       {% endfor %}
     </div>
-    <div class="legend-add">
-      <input type="text" id="legend-new-code" placeholder="Code (ex: PRG)" maxlength="20">
-      <input type="text" id="legend-new-label" placeholder="Libellé">
-      <input type="color" id="legend-new-color" value="#2472a4" title="Couleur">
-      <button type="button" class="btn" id="legend-add-btn">+ Ajouter un code</button>
-    </div>
+    <a class="legend-manage-link" href="{{ url_for('parametres') }}">&#9881; Gérer les codes et leurs couleurs</a>
   </details>
 
   <footer class="foot">Source : Google Sheet "Planning" — onglet PLANNING quotidien. Glisser une tâche pour la déplacer, Ctrl+glisser pour la dupliquer.</footer>
@@ -81,6 +76,10 @@
         <label>Texte <span class="label-optional">(détails, optionnel)</span>
           <textarea id="f-text" rows="3" placeholder="Ex : Préparation du programme robot R1"></textarea>
         </label>
+        <label class="field-checkbox">
+          <input type="checkbox" id="f-pending">
+          Pas encore validé
+        </label>
         <div class="modal-dates">
           <label>Du
             <input type="date" id="f-date-start" required>
@@ -103,6 +102,7 @@
 
   <script>
     window.PLANNING_WEEK_OFFSET = {{ week_offset }};
+    window.PLANNING_WEEKS_SHOWN = {{ weeks }};
   </script>
   <script src="{{ url_for('static', filename='planning.js') }}"></script>
 </body>

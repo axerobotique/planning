@@ -1,0 +1,92 @@
+.params-wrap {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 0 20px 40px;
+}
+
+.params-intro {
+  font-size: 13px;
+  color: #667;
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+
+.params-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.params-table th, .params-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.params-table th {
+  background: #f7f8fa;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: #778;
+}
+
+.params-table tbody tr:last-child td { border-bottom: none; }
+
+.params-table td.col-color { width: 46px; }
+.params-table td.col-code { font-weight: 600; white-space: nowrap; }
+.params-table td.col-actions { width: 40px; text-align: right; white-space: nowrap; }
+
+.params-table input[type="color"] {
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer;
+}
+.params-table input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.params-table input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+.params-table input[type="color"]::-moz-color-swatch { border: none; border-radius: 5px; }
+
+.params-table input.label-input {
+  width: 100%; border: 1px solid transparent; background: transparent; padding: 5px 6px;
+  border-radius: 6px; font-size: 13px; font-family: inherit; color: var(--text);
+}
+.params-table input.label-input:hover { border-color: var(--border); }
+.params-table input.label-input:focus { border-color: var(--border); background: #fafbfc; outline: none; }
+
+.row-del {
+  border: none; background: none; color: #b33; font-size: 17px; line-height: 1;
+  cursor: pointer; padding: 4px 6px;
+}
+.row-del:hover { color: #7a1c12; }
+
+.params-empty { color: #99a; font-size: 13px; padding: 18px; text-align: center; }
+
+.params-add {
+  margin-top: 20px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.params-add h2 { font-size: 13px; margin: 0 0 10px; color: #556; }
+
+.params-add-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.params-add-row input[type="text"] {
+  flex: 1; min-width: 140px; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; font-family: inherit; color: var(--text);
+}
+#new-code { flex: 0 1 140px; text-transform: uppercase; }
+.params-add-row input[type="color"] {
+  width: 36px; height: 36px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer;
+}
+
+.params-hint { margin: 10px 0 0; font-size: 11px; color: #99a; }
+
+@media (max-width: 600px) {
+  .params-table th:first-child, .params-table td.col-color { width: 40px; }
+}

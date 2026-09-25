@@ -12,6 +12,7 @@
   const fCode = document.getElementById("f-code");
   const fClient = document.getElementById("f-client");
   const fText = document.getElementById("f-text");
+  const fPending = document.getElementById("f-pending");
   const fDateStart = document.getElementById("f-date-start");
   const fDateEnd = document.getElementById("f-date-end");
   const btnDelete = document.getElementById("btn-delete");
@@ -23,12 +24,16 @@
   const affaireTaskNewInput = document.getElementById("affaire-task-new");
   const affaireTaskNewAssignee = document.getElementById("affaire-task-new-assignee");
   const affaireTaskAddBtn = document.getElementById("affaire-task-add-btn");
-  const legendNewCode = document.getElementById("legend-new-code");
-  const legendNewLabel = document.getElementById("legend-new-label");
-  const legendNewColor = document.getElementById("legend-new-color");
-  const legendAddBtn = document.getElementById("legend-add-btn");
 
   let weekOffset = window.PLANNING_WEEK_OFFSET || 0;
+
+  // Zoom = nombre de semaines affichées. Deux paliers seulement (vue par
+  // défaut resserrée / vue élargie) : suffisant pour le besoin ("voir plus
+  // de semaines" puis revenir au réglage par défaut), pas besoin d'un
+  // contrôle continu.
+  const WEEKS_DEFAULT = window.PLANNING_WEEKS_SHOWN || 3;
+  const WEEKS_ZOOMED_OUT = WEEKS_DEFAULT * 2;
+  let weeksShown = WEEKS_DEFAULT;
   let currentData = null;
   let modalOpen = false;
   let dragging = false;
@@ -128,102 +133,41 @@
   }
 
   async function loadGrid() {
-    const resp = await fetch(`/api/grid?s=${encodeURIComponent(weekOffset)}`);
+    const resp = await fetch(`/api/grid?s=${encodeURIComponent(weekOffset)}&w=${encodeURIComponent(weeksShown)}`);
     const data = await resp.json();
     currentData = data;
     renderLegend(data.legend);
     renderGrid(data);
+    updateZoomButton();
+  }
+
+  function updateZoomButton() {
+    const btn = document.getElementById("btn-zoom");
+    const zoomedOut = weeksShown > WEEKS_DEFAULT;
+    btn.textContent = zoomedOut ? "+ Zoomer" : "− Dézoomer";
+    btn.title = zoomedOut
+      ? `Revenir à la vue par défaut (${WEEKS_DEFAULT} semaines)`
+      : `Afficher plus de semaines (${WEEKS_ZOOMED_OUT})`;
+    gridRoot.classList.toggle("zoomed-out", zoomedOut);
   }
 
   // La légende est re-rendue à chaque chargement (pas seulement au premier
   // rendu Jinja) pour refléter tout de suite un code ajouté/édité/supprimé
   // par un autre utilisateur — les codes sont gérés dans l'onglet "Codes" du
   // sheet, plus de dict en dur (cf. `read_codes` côté serveur).
+  // Lecture seule ici : la gestion (ajout/renommage/couleur/suppression) se
+  // fait sur la page dédiée /parametres, pour ne pas dupliquer ce CRUD à
+  // deux endroits (cf. api/codes/save|delete, communs aux deux pages).
   function renderLegend(legend) {
     if (!legend) return;
     legendRoot.innerHTML = Object.entries(legend).map(([code, info]) => `
       <span class="legend-item" data-code="${esc(code)}">
-        <input type="color" class="swatch" value="${info.color}" data-code="${esc(code)}" title="Changer la couleur de ${esc(code)}">
+        <span class="swatch" style="background:${info.color}"></span>
         <span class="legend-label">${esc(code)} — ${esc(info.label)}</span>
-        <button type="button" class="legend-edit" data-code="${esc(code)}" title="Renommer le libellé">✎</button>
-        <button type="button" class="legend-del" data-code="${esc(code)}" title="Supprimer le code">×</button>
       </span>`).join("");
-
-    legendRoot.querySelectorAll("input.swatch").forEach((inp) => {
-      inp.addEventListener("change", async () => {
-        const code = inp.dataset.code;
-        const info = legend[code];
-        await saveCode(code, info.label, inp.value, `Couleur de ${code} mise à jour.`);
-      });
-    });
-    legendRoot.querySelectorAll(".legend-edit").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const code = btn.dataset.code;
-        const info = legend[code];
-        const label = prompt(`Libellé pour ${code} :`, info.label);
-        if (label == null) return;
-        const trimmed = label.trim();
-        if (!trimmed || trimmed === info.label) return;
-        await saveCode(code, trimmed, info.color, `Libellé de ${code} mis à jour.`);
-      });
-    });
-    legendRoot.querySelectorAll(".legend-del").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const code = btn.dataset.code;
-        if (!confirm(`Supprimer le code ${code} ? Les tâches déjà écrites avec ce code perdront sa couleur/libellé.`)) return;
-        try {
-          const d = await fetchJSON("/api/codes/delete", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code }),
-          });
-          if (!d.ok) throw new Error(d.error || "Erreur.");
-          showToast(`Code ${code} supprimé.`);
-          await loadGrid();
-        } catch (e) {
-          showToast(e.message || "Erreur.", "danger");
-        }
-      });
-    });
 
     fillCodeOptions(legend, fCode.value);
   }
-
-  async function saveCode(code, label, color, successMsg) {
-    try {
-      const d = await fetchJSON("/api/codes/save", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, label, color }),
-      });
-      if (!d.ok) throw new Error(d.error || "Erreur.");
-      showToast(successMsg);
-      await loadGrid();
-    } catch (e) {
-      showToast(e.message || "Erreur.", "danger");
-    }
-  }
-
-  async function addCode() {
-    const code = legendNewCode.value.trim().toUpperCase();
-    const label = legendNewLabel.value.trim();
-    const color = legendNewColor.value;
-    if (!code || !label) {
-      showToast("Renseigne un code et un libellé.", "danger");
-      return;
-    }
-    legendAddBtn.disabled = true;
-    try {
-      await saveCode(code, label, color, `Code ${code} ajouté.`);
-      legendNewCode.value = "";
-      legendNewLabel.value = "";
-    } finally {
-      legendAddBtn.disabled = false;
-    }
-  }
-
-  legendAddBtn.addEventListener("click", addCode);
-  legendNewLabel.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); addCode(); }
-  });
 
   // Options du <select> Code de la modale, tenues à jour à chaque rendu de
   // légende (plutôt que figées au chargement Jinja) : sans ça, un code
@@ -302,7 +246,7 @@
               </div>
             </th>`
           : "";
-        trs += `<tr class="${altCls}" data-employee="${esc(emp.name)}">${nameCell}${cells}</tr>`;
+        trs += `<tr class="${altCls}" data-employee="${esc(emp.name)}" data-slot="${s}">${nameCell}${cells}</tr>`;
       }
       return trs;
     }).join("");
@@ -326,6 +270,7 @@
     if (!t.is_start) cls.push("seg-cont-left");
     if (!t.is_end) cls.push("seg-cont-right");
     if (t.truncated) cls.push("truncated");
+    if (t.pending) cls.push("task-pending");
     const style = `background:${t.bg}; color:${t.fg};${t.italic ? " font-style:italic;" : ""}`;
     // Tâche tronquée (continue hors de la fenêtre affichée, ex: astreinte sans
     // date de fin) : pas de drag, sa vraie étendue n'est pas connue ici — la
@@ -356,7 +301,8 @@
         data-row="${t.row}" data-date-start="${t.date_start}" data-date-end="${t.date_end}"
         data-employee="${esc(employeeName)}" data-text="${esc(t.raw_text)}" data-code="${esc(t.code)}"
         data-client="${esc(t.client)}" data-texte="${esc(t.texte)}"
-        data-affaire="${esc(t.affaire || "")}" data-group="${esc(t.group || "")}">${body}</div>`;
+        data-affaire="${esc(t.affaire || "")}" data-group="${esc(t.group || "")}"
+        data-pending="${t.pending ? "1" : ""}">${body}</div>`;
   }
 
   function bindGridEvents() {
@@ -420,6 +366,7 @@
           texte: el.dataset.texte,
           affaire: el.dataset.affaire,
           group: el.dataset.group,
+          pending: el.dataset.pending === "1",
           dateStart: el.dataset.dateStart,
           dateEnd: el.dataset.dateEnd,
         });
@@ -433,6 +380,7 @@
           employee: el.dataset.employee,
           text: el.dataset.text,
           affaire: el.dataset.affaire,
+          pending: el.dataset.pending === "1",
           dateStart: el.dataset.dateStart,
           dateEnd: el.dataset.dateEnd,
         }));
@@ -474,6 +422,11 @@
           return;
         }
 
+        // Slot = ligne visuelle où la tâche a été déposée (cf. data-slot sur
+        // le <tr>, cf. `place_task_at_slot` côté serveur) : le drop pilote la
+        // ligne exacte, plus de tri automatique qui l'ignorerait au rendu
+        // suivant.
+        const targetSlot = Number(td.closest("tr").dataset.slot);
         const resp = await fetch("/api/task/relocate", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -481,7 +434,9 @@
             dates: sourceDates,
             text: payload.text,
             affaire: payload.affaire,
+            pending: payload.pending,
             target_employee: td.dataset.employee,
+            target_slot: targetSlot,
             date_start: newStart,
             date_end: newEnd,
             mode,
@@ -535,6 +490,7 @@
     fClient.value = "";
     fText.value = "";
     fAffaire.value = "";
+    fPending.checked = false;
     fDateStart.value = dateIso;
     fDateEnd.value = dateIso;
     btnDelete.hidden = true;
@@ -572,6 +528,7 @@
     fClient.value = task.client || "";
     fText.value = task.texte || "";
     fAffaire.value = task.affaire || "";
+    fPending.checked = !!task.pending;
     fDateStart.value = task.dateStart;
     fDateEnd.value = task.dateEnd;
     btnDelete.hidden = false;
@@ -739,6 +696,7 @@
       employees,
       text,
       affaire: fAffaire.value.trim(),
+      pending: fPending.checked,
       date_start: fDateStart.value,
       date_end: fDateEnd.value,
     };
@@ -799,6 +757,7 @@
           dates: editing.oldDates,
           text,
           affaire: fAffaire.value.trim(),
+          pending: fPending.checked,
           target_employee: targetEmployee,
           date_start: fDateStart.value,
           date_end: fDateEnd.value,
@@ -820,6 +779,10 @@
   document.getElementById("btn-prev").addEventListener("click", () => { weekOffset -= 1; loadGrid(); });
   document.getElementById("btn-next").addEventListener("click", () => { weekOffset += 1; loadGrid(); });
   document.getElementById("btn-today").addEventListener("click", () => { weekOffset = 0; loadGrid(); });
+  document.getElementById("btn-zoom").addEventListener("click", () => {
+    weeksShown = weeksShown > WEEKS_DEFAULT ? WEEKS_DEFAULT : WEEKS_ZOOMED_OUT;
+    loadGrid();
+  });
   document.getElementById("btn-new").addEventListener("click", () => {
     const today = new Date().toISOString().slice(0, 10);
     const firstEmployee = (currentData && currentData.employees[0] && currentData.employees[0].name) || "";

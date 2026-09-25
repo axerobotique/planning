@@ -50,8 +50,8 @@ SHEET_START_DATE = date(2025, 5, 1)
 SHEET_START_COL = 4  # colonne D (A=1, B=2, C=3, D=4)
 FIRST_EMPLOYEE_ROW = 5  # 1-based : ligne 3 = dates, ligne 4 = jours, ligne 5 = 1er employé
 
-WEEKS_SHOWN = 4
-DAYS_SHOWN = WEEKS_SHOWN * 7
+WEEKS_SHOWN = 3  # nombre de semaines affichées par défaut (bouton zoom pour en voir plus)
+WEEKS_SHOWN_MAX = 12  # garde-fou : borne haute du zoom arrière côté client
 
 # Garde-fou anti-catastrophe : quoi qu'il arrive côté client (bug de calcul de
 # date, requête forgée, etc.), le serveur ne doit jamais pouvoir écrire/vider
@@ -88,14 +88,15 @@ STATUT_STYLES = {
     "CONGÉS": {"bg": "#eceff1", "fg": "#607d8b", "italic": True},
 }
 
-# Le numéro d'affaire et l'éventuel identifiant de groupe multi-technicien
-# d'une tâche sont encodés directement dans le texte brut de la cellule (ex:
-# "ROB-ITRON [AFF:ITRON-2026-042] [GRP:a1b2c3d4]"), pas dans une colonne à
-# part : ça le fait voyager naturellement avec le texte lors d'un
-# déplacement/duplication/édition, sans mapping externe fragile (une ligne
-# vidée peut être réutilisée par une tâche totalement différente — cf.
-# `place_task`). Les marqueurs sont retirés avant affichage.
-MARKER_RE = re.compile(r"\s*\[(AFF|GRP):([^\]]*)\]\s*$")
+# Le numéro d'affaire, l'éventuel identifiant de groupe multi-technicien et le
+# statut "pas encore validé" d'une tâche sont encodés directement dans le
+# texte brut de la cellule (ex : "ROB-ITRON [AFF:ITRON-2026-042]
+# [GRP:a1b2c3d4] [PEND:1]"), pas dans une colonne à part : ça le fait voyager
+# naturellement avec le texte lors d'un déplacement/duplication/édition, sans
+# mapping externe fragile (une ligne vidée peut être réutilisée par une tâche
+# totalement différente — cf. `place_task`). Les marqueurs sont retirés avant
+# affichage.
+MARKER_RE = re.compile(r"\s*\[(AFF|GRP|PEND):([^\]]*)\]\s*$")
 
 TACHES_SHEET = "Taches"
 TACHES_HEADER = ["Numéro affaire", "Texte", "Fait", "Assigné"]
@@ -164,13 +165,14 @@ def parse_iso(s: str) -> date:
         raise PlanningError(f"Date invalide : {s!r}")
 
 
-def strip_markers(raw: str) -> tuple[str, str, str]:
-    """Sépare le texte affiché du numéro d'affaire et de l'identifiant de
-    groupe éventuellement encodés en fin de cellule (dans n'importe quel
-    ordre)."""
+def strip_markers(raw: str) -> tuple[str, str, str, bool]:
+    """Sépare le texte affiché du numéro d'affaire, de l'identifiant de groupe
+    et du statut "pas encore validé" éventuellement encodés en fin de cellule
+    (dans n'importe quel ordre)."""
     text = raw
     affaire = ""
     group = ""
+    pending = False
     while True:
         m = MARKER_RE.search(text)
         if not m:
@@ -179,12 +181,14 @@ def strip_markers(raw: str) -> tuple[str, str, str]:
         text = text[: m.start()].rstrip()
         if key == "AFF":
             affaire = val
-        else:
+        elif key == "GRP":
             group = val
-    return text, affaire, group
+        else:
+            pending = val == "1"
+    return text, affaire, group, pending
 
 
-def with_markers(text: str, affaire: str = "", group: str = "") -> str:
+def with_markers(text: str, affaire: str = "", group: str = "", pending: bool = False) -> str:
     text = text.strip()
     affaire = (affaire or "").strip()
     group = (group or "").strip()
@@ -192,6 +196,8 @@ def with_markers(text: str, affaire: str = "", group: str = "") -> str:
         text = f"{text} [AFF:{affaire}]"
     if group:
         text = f"{text} [GRP:{group}]"
+    if pending:
+        text = f"{text} [PEND:1]"
     return text
 
 
@@ -459,6 +465,45 @@ def place_task(employee: str, d_start: date, d_end: date, text: str) -> int:
     return target_row
 
 
+def place_task_at_slot(employee: str, slot: int, d_start: date, d_end: date, text: str) -> int:
+    """Comme `place_task`, mais écrit dans la ligne (slot) exacte demandée
+    plutôt que la première ligne libre — pour que le glisser-déposer vers une
+    ligne précise soit respecté (cf. plus de tri auto par durée dans
+    `build_grid`). Étend le bloc du technicien si le slot demandé n'existe
+    pas encore, échoue si la ligne est déjà occupée sur la période."""
+    text = text.strip()
+    if not text:
+        raise PlanningError("Le texte de la tâche est vide.")
+    if slot < 0:
+        raise PlanningError("Ligne cible invalide.")
+
+    blocks = read_employee_blocks()
+    block = find_block(blocks, employee)
+
+    dates = date_range(d_start, d_end)
+    cols = [col_for_date(d) for d in dates]
+    col_start, col_end = min(cols), max(cols)
+    col_start_letter, col_end_letter = col_letter(col_start), col_letter(col_end)
+
+    block_height = block["end_row"] - block["start_row"] + 1
+    while slot >= block_height:
+        sheets_client.insert_row_before(block["end_row"] + 1)
+        block["end_row"] += 1
+        block_height += 1
+
+    target_row = block["start_row"] + slot
+    existing = sheets_client.get_range(f"{col_start_letter}{target_row}:{col_end_letter}{target_row}")
+    row_vals = existing[0] if existing else []
+    if any((row_vals[k].strip() if k < len(row_vals) and row_vals[k] else "") for k in range(len(cols))):
+        raise PlanningError("Cette ligne est déjà occupée sur cette période.")
+
+    sheets_client.update_range(
+        f"{col_start_letter}{target_row}:{col_end_letter}{target_row}",
+        [[text] * len(cols)],
+    )
+    return target_row
+
+
 def clear_task(row: int, dates: list[date]) -> None:
     ranges = [f"{col_letter(col_for_date(d))}{row}" for d in dates]
     sheets_client.clear_ranges(ranges)
@@ -491,7 +536,7 @@ def remove_employee_row(employee: str) -> None:
     sheets_client.delete_row(last_row)
 
 
-def build_grid(week_offset: int, codes: dict | None = None) -> dict:
+def build_grid(week_offset: int, codes: dict | None = None, weeks: int = WEEKS_SHOWN) -> dict:
     codes = codes if codes is not None else DEFAULT_CODES_MAP
     today = date.today()
     monday = today - timedelta(days=today.weekday())
@@ -510,7 +555,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
             "groups": {},
         }
 
-    num_days = min(DAYS_SHOWN, max_offset - start_offset + 1)
+    num_days = min(weeks * 7, max_offset - start_offset + 1)
     end_offset = start_offset + num_days - 1
     col_start_letter = col_letter(SHEET_START_COL + start_offset)
     col_end_letter = col_letter(SHEET_START_COL + end_offset)
@@ -572,18 +617,12 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
         sheet_row = FIRST_EMPLOYEE_ROW + idx
         name = (name_row[0] if name_row else "").strip()
         if name:
-            current = {"name": name, "cells": [[] for _ in range(num_days)], "_block_height": 0}
+            current = {"name": name, "cells": [[] for _ in range(num_days)], "_max_slot": -1}
             employees.append(current)
             block_start_idx = idx
         if current is None:
             continue
         slot = idx - block_start_idx
-        # Compté sur CHAQUE ligne du bloc, y compris celles sans aucune tâche
-        # dans la fenêtre affichée : le nombre de lignes affichées doit
-        # correspondre au nombre de lignes réellement réservées dans le sheet
-        # pour ce technicien (cf. bouton +/- ligne), pas seulement à celles
-        # qui contiennent une tâche cette semaine.
-        current["_block_height"] = slot + 1
         r = data_rows[idx] if idx < len(data_rows) else []
         texts = [(r[j].strip() if j < len(r) and r[j] else "") for j in range(num_days)]
         before_val = (before_rows[idx][0].strip() if idx < len(before_rows) and before_rows[idx] else "")
@@ -600,7 +639,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
             k = j
             while k + 1 < num_days and texts[k + 1] == texts[j]:
                 k += 1
-            clean_text, affaire, group = strip_markers(texts[j])
+            clean_text, affaire, group, pending = strip_markers(texts[j])
             style = cell_style(clean_text, affaire, codes)
             parts = parse_task_parts(clean_text, codes)
             # Fragment tronqué = la même tâche continue hors fenêtre (à gauche
@@ -621,6 +660,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                 "texte": parts["texte"],
                 "affaire": affaire,
                 "group": group,
+                "pending": pending,
                 "bg": style["bg"],
                 "fg": style["fg"],
                 "italic": style["italic"],
@@ -636,6 +676,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                     "date_start": days_info[j]["iso"],
                     "date_end": days_info[k]["iso"],
                 })
+            current["_max_slot"] = max(current["_max_slot"], slot)
             for jj in range(j, k + 1):
                 current["cells"][jj].append({
                     **frag_base,
@@ -644,38 +685,28 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                 })
             j = k + 1
 
-    # Réordonne les lignes (slots) de chaque bloc technicien : la tâche la
-    # plus longue (en jours, sur la période affichée) en haut, la plus
-    # courte en bas. La mesure retenue par slot est l'étendue max d'un seul
-    # fragment (pas la somme sur toute la période), pour rester intuitif
-    # visuellement. Tous les slots physiques du bloc sont inclus (span 0 par
-    # défaut), même sans tâche cette semaine, pour finir en bas dans leur
-    # ordre d'origine plutôt que de disparaître (cf. `_block_height`).
-    for emp in employees:
-        block_height = emp["_block_height"]
-        slot_span: dict[int, int] = {s: 0 for s in range(block_height)}
-        for day_frags in emp["cells"]:
-            for f in day_frags:
-                span = (date.fromisoformat(f["date_end"]) - date.fromisoformat(f["date_start"])).days + 1
-                if span > slot_span.get(f["slot"], 0):
-                    slot_span[f["slot"]] = span
-        ordered_slots = sorted(slot_span, key=lambda s: (-slot_span[s], s))
-        slot_map = {old: new for new, old in enumerate(ordered_slots)}
-        for day_frags in emp["cells"]:
-            for f in day_frags:
-                f["slot"] = slot_map[f["slot"]]
+    # Pas de réordonnancement automatique des lignes (slots) : `slot` reste
+    # l'offset de ligne physique dans le sheet (idx - block_start_idx), pour
+    # que la position d'une tâche soit stable et pilotable par glisser-
+    # déposer (cf. `place_task_at_slot`) plutôt que recalculée à chaque
+    # rendu selon la durée des tâches.
 
     # Une ligne technicien sans tâche un jour donné ne doit pas laisser la
     # ligne suivante remonter prendre sa place visuelle : ça décale les
-    # tâches d'un jour à l'autre et casse l'alignement horizontal. On
-    # réserve donc un "placeholder" invisible à chaque ligne physiquement
-    # réservée au technicien dans le sheet, pour les jours où cette ligne
-    # précise est vide — même si elle n'a aucune tâche du tout cette semaine.
+    # tâches d'un jour à l'autre et casse l'alignement horizontal. On réserve
+    # donc un "placeholder" invisible à chaque ligne utilisée cette semaine,
+    # PLUS une ligne vide supplémentaire en bas de bloc — cliquable pour
+    # ajouter une tâche en parallèle — pour ne pas obliger à passer par le
+    # bouton "+" à chaque fois qu'un créneau de plus est nécessaire (cf. bug
+    # initial : plus assez de lignes pour ajouter une tâche à Lilian). Les
+    # lignes réservées dans le sheet mais inutilisées cette semaine restent
+    # masquées : `place_task` les retrouve/en crée une nouvelle au besoin.
     for emp in employees:
-        block_height = emp.pop("_block_height")
+        max_slot = emp.pop("_max_slot")
+        row_count = max_slot + 2  # dernier slot utilisé + 1 ligne vide de secours
         for jj, day_frags in enumerate(emp["cells"]):
             present = {f["slot"] for f in day_frags}
-            for slot in range(block_height):
+            for slot in range(row_count):
                 if slot not in present:
                     day_frags.append({
                         "row": None,
@@ -686,6 +717,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                         "texte": "",
                         "affaire": "",
                         "group": "",
+                        "pending": False,
                         "bg": None,
                         "fg": None,
                         "italic": False,
@@ -698,7 +730,7 @@ def build_grid(week_offset: int, codes: dict | None = None) -> dict:
                         "placeholder": True,
                     })
             day_frags.sort(key=lambda f: f["slot"])
-        emp["rows"] = block_height
+        emp["rows"] = row_count
 
     return {
         "employees": employees,
@@ -761,13 +793,27 @@ def delete_affaire_task(row: int) -> None:
     sheets_client.clear_ranges([f"A{row}:D{row}"], sheet=TACHES_SHEET)
 
 
+def _parse_weeks(raw: str | None) -> int:
+    try:
+        weeks = int(raw)
+    except (TypeError, ValueError):
+        return WEEKS_SHOWN
+    return max(1, min(weeks, WEEKS_SHOWN_MAX))
+
+
 @app.route("/")
 def planning():
     try:
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
-    return render_template("planning.html", week_offset=week_offset, legend=read_codes())
+    weeks = _parse_weeks(request.args.get("w"))
+    return render_template("planning.html", week_offset=week_offset, weeks=weeks, legend=read_codes())
+
+
+@app.route("/parametres")
+def parametres():
+    return render_template("parametres.html", legend=_legend_json())
 
 
 @app.route("/api/grid")
@@ -776,8 +822,9 @@ def api_grid():
         week_offset = int(request.args.get("s", "0"))
     except ValueError:
         week_offset = 0
+    weeks = _parse_weeks(request.args.get("w"))
     codes = read_codes()
-    grid = build_grid(week_offset, codes)
+    grid = build_grid(week_offset, codes, weeks=weeks)
     grid["legend"] = {code: {"label": label, "color": color} for code, (label, color) in codes.items()}
     return jsonify(grid)
 
@@ -825,6 +872,7 @@ def api_task_save():
                 employees.append(e)
         text = (body.get("text") or "").strip()
         affaire = (body.get("affaire") or "").strip()
+        pending = bool(body.get("pending"))
         d_start = parse_iso(body.get("date_start"))
         d_end = parse_iso(body.get("date_end"))
         row = body.get("row")
@@ -850,7 +898,7 @@ def api_task_save():
         # s'il n'en reste qu'un après édition, on l'abandonne (la tâche
         # redevient une tâche simple).
         group_id = (group_id or new_group_id()) if len(employees) > 1 else ""
-        raw_text = with_markers(text, affaire, group_id)
+        raw_text = with_markers(text, affaire, group_id, pending)
 
         blocks = read_employee_blocks()
         new_dates = set(date_range(d_start, d_end))
@@ -929,7 +977,9 @@ def api_task_relocate():
         dates = [parse_iso(d) for d in (body.get("dates") or [])]
         text = (body.get("text") or "").strip()
         affaire = (body.get("affaire") or "").strip()
+        pending = bool(body.get("pending"))
         target_employee = (body.get("target_employee") or "").strip()
+        target_slot = body.get("target_slot")
         d_start = parse_iso(body.get("date_start"))
         d_end = parse_iso(body.get("date_end"))
         mode = body.get("mode") or "move"
@@ -950,7 +1000,15 @@ def api_task_relocate():
         # tâche source faisait partie d'un groupe multi-technicien, cette
         # copie s'en détache (pas de propagation du déplacement aux autres
         # techniciens du groupe).
-        place_task(target_employee, d_start, d_end, with_markers(text, affaire))
+        # `target_slot` (ligne visuelle où la tâche a été déposée) pilote la
+        # ligne exacte écrite dans le sheet quand on la connaît (drag & drop
+        # depuis la grille) ; sinon on retombe sur la 1ère ligne libre (ex:
+        # duplication sans info de ligne cible).
+        raw_text = with_markers(text, affaire, pending=pending)
+        if target_slot is not None:
+            place_task_at_slot(target_employee, int(target_slot), d_start, d_end, raw_text)
+        else:
+            place_task(target_employee, d_start, d_end, raw_text)
         return jsonify({"ok": True})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400

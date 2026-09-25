@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paramètres — Planning atelier</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='parametres.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Paramètres — Codes &amp; couleurs</h1>
+    <nav class="nav">
+      <a class="btn" href="{{ url_for('planning') }}">&larr; Retour au planning</a>
+    </nav>
+  </header>
+
+  <main class="params-wrap">
+    <p class="params-intro">
+      Ces codes (ex : ROB, CAB, MES…) servent de préfixe au début du texte d'une tâche
+      ("CODE - Client") pour lui donner sa couleur dans le planning. Change le libellé ou
+      la couleur directement dans le tableau — c'est enregistré immédiatement. L'identifiant
+      du code lui-même n'est pas modifiable une fois créé (ça casserait la reconnaissance
+      des tâches déjà écrites avec ce code) : pour le renommer, crée le nouveau code puis
+      supprime l'ancien.
+    </p>
+
+    <table class="params-table">
+      <thead>
+        <tr><th>Couleur</th><th>Code</th><th>Libellé</th><th></th></tr>
+      </thead>
+      <tbody id="codes-tbody"></tbody>
+    </table>
+
+    <div class="params-add">
+      <h2>Ajouter un code</h2>
+      <div class="params-add-row">
+        <input type="color" id="new-color" value="#2472a4" title="Couleur">
+        <input type="text" id="new-code" placeholder="Code (ex : PRG)" maxlength="20">
+        <input type="text" id="new-label" placeholder="Libellé (ex : Programmation)">
+        <button type="button" class="btn btn-primary" id="add-btn">+ Ajouter</button>
+      </div>
+      <p class="params-hint">Lettres/chiffres uniquement pour le code, sans espace ni tiret (ex : MES, MAP2).</p>
+    </div>
+  </main>
+
+  <script>
+    window.INITIAL_LEGEND = {{ legend | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='parametres.js') }}"></script>
+</body>
+</html>

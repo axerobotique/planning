@@ -151,6 +151,23 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 .col-day .dow { font-weight: 600; font-size: 11px; color: #667; }
 .col-day .date { font-size: 12px; }
 
+/* Vue "dézoomée" (plus de semaines affichées) : colonnes resserrées pour
+   limiter le scroll horizontal, au prix d'un texte de tâche plus tronqué. */
+#grid-root.zoomed-out .col-day,
+#grid-root.zoomed-out .cell {
+  min-width: 56px;
+}
+
+#grid-root.zoomed-out table.planning th,
+#grid-root.zoomed-out table.planning td {
+  padding: 4px;
+  font-size: 11px;
+}
+
+#grid-root.zoomed-out .task-texte {
+  -webkit-line-clamp: 2;
+}
+
 .col-week {
   text-align: center;
   background: #eef0f3;
@@ -184,6 +201,28 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 .task.dragging { opacity: .4; }
 .task.placeholder { background: transparent; cursor: pointer; }
 .task.truncated { cursor: pointer; background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.16) 0 6px, transparent 6px 12px); }
+
+/* Tâche "pas encore validée" : la couleur du code doit rester perceptible
+   (identification rapide) mais très délavée et hachurée, pour la distinguer
+   au premier coup d'œil d'une tâche confirmée. Un ::before superposé plutôt
+   qu'un simple background-image sur .task, car le raccourci `background`
+   posé en inline style (couleur du code) réinitialiserait sinon
+   `background-image` et masquerait le hachurage. */
+.task.task-pending {
+  position: relative;
+  color: #33404d !important;
+  border: 1px dashed rgba(51, 64, 77, .35);
+}
+.task.task-pending::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: rgba(255, 255, 255, .8);
+  background-image: repeating-linear-gradient(45deg, transparent 0 6px, rgba(255, 255, 255, .45) 6px 12px);
+  pointer-events: none;
+}
+.task.task-pending > * { position: relative; z-index: 1; }
 
 .task:last-child { margin-bottom: 0; }
 
@@ -276,6 +315,12 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 
 .label-optional { font-weight: 400; color: #889; }
 
+.field-checkbox {
+  display: flex; align-items: center; gap: 8px; font-weight: 400; font-size: 13px;
+  color: var(--text); cursor: pointer;
+}
+.field-checkbox input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+
 .employee-multiselect {
   margin-top: 4px; max-height: 140px; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
@@ -355,6 +400,15 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 
+.legend-manage-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #2472a4;
+  text-decoration: none;
+}
+.legend-manage-link:hover { text-decoration: underline; }
+
 .swatch {
   width: 14px;
   height: 14px;
@@ -363,52 +417,7 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
   vertical-align: middle;
   border: 1px solid rgba(0, 0, 0, .15);
   padding: 0;
-  cursor: pointer;
 }
-/* input[type=color] : neutralise le padding/bordure par défaut du navigateur
-   pour qu'il ait la même taille qu'un swatch statique. */
-input.swatch::-webkit-color-swatch-wrapper { padding: 0; }
-input.swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
-input.swatch::-moz-color-swatch { border: none; border-radius: 2px; }
-
-.legend-edit, .legend-del {
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 0 1px;
-  font-size: 12px;
-  line-height: 1;
-  color: #99a;
-}
-.legend-edit:hover { color: #2472a4; }
-.legend-del:hover { color: #9c1c12; }
-
-.legend-add {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-.legend-add input[type="text"] {
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 12px;
-  font-family: inherit;
-}
-#legend-new-code { width: 110px; text-transform: uppercase; }
-#legend-new-label { width: 160px; }
-.legend-add input[type="color"] {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.legend-add .btn { padding: 5px 10px; }
 
 .foot {
   text-align: center;
