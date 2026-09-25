@@ -3,3 +3,6 @@ WARNING: This is a development server. Do not use it in a production deployment.
  * Running on http://127.0.0.1:5050
  * Running on http://192.168.0.228:5050
 Press CTRL+C to quit
+127.0.0.1 - - [25/Sep/2026 20:19:25] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [25/Sep/2026 20:19:25] "GET /parametres HTTP/1.1" 200 -
+127.0.0.1 - - [25/Sep/2026 20:19:28] "GET /api/grid?s=0 HTTP/1.1" 200 -
