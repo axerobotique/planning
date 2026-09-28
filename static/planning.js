@@ -24,6 +24,7 @@
   const affaireTaskNewInput = document.getElementById("affaire-task-new");
   const affaireTaskNewAssignee = document.getElementById("affaire-task-new-assignee");
   const affaireTaskAddBtn = document.getElementById("affaire-task-add-btn");
+  const dateJump = document.getElementById("date-jump");
 
   let weekOffset = window.PLANNING_WEEK_OFFSET || 0;
 
@@ -139,6 +140,30 @@
     renderLegend(data.legend);
     renderGrid(data);
     updateZoomButton();
+    if (data.days && data.days.length) dateJump.value = data.days[0].iso;
+  }
+
+  // Lundi (Python weekday()==0) de la semaine contenant `d`, construit à
+  // partir des composants de date locaux (pas d.getTime()) pour ne pas
+  // dépendre de l'heure/fuseau au moment de l'appel.
+  function mondayOf(d) {
+    const jsDay = (d.getDay() + 6) % 7; // Lundi=0 ... Dimanche=6
+    const m = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    m.setDate(m.getDate() - jsDay);
+    return m;
+  }
+
+  // Convertit une date choisie dans le sélecteur en `weekOffset` (nombre de
+  // semaines depuis "aujourd'hui", même référence que le serveur — cf.
+  // `build_grid` dans app.py) plutôt que d'envoyer la date brute au serveur,
+  // pour rester compatible avec l'API existante (`s`=décalage en semaines).
+  function jumpToDate(iso) {
+    if (!iso) return;
+    const [y, mo, da] = iso.split("-").map(Number);
+    const picked = new Date(y, mo - 1, da);
+    const diffDays = Math.round((mondayOf(picked) - mondayOf(new Date())) / 86400000);
+    weekOffset = Math.round(diffDays / 7);
+    loadGrid();
   }
 
   function updateZoomButton() {
@@ -799,6 +824,7 @@
   document.getElementById("btn-prev").addEventListener("click", () => { weekOffset -= 1; loadGrid(); });
   document.getElementById("btn-next").addEventListener("click", () => { weekOffset += 1; loadGrid(); });
   document.getElementById("btn-today").addEventListener("click", () => { weekOffset = 0; loadGrid(); });
+  dateJump.addEventListener("change", () => jumpToDate(dateJump.value));
   document.getElementById("btn-zoom").addEventListener("click", () => {
     weeksShown = weeksShown > WEEKS_DEFAULT ? WEEKS_DEFAULT : WEEKS_ZOOMED_OUT;
     loadGrid();

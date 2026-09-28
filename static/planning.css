@@ -54,6 +54,11 @@ body {
 
 .btn-primary:hover { background: #1d5c84; }
 
+.date-jump {
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .banner {
   margin: 12px 20px;
   padding: 10px 14px;

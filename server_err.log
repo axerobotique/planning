@@ -6,3 +6,6 @@ Press CTRL+C to quit
 127.0.0.1 - - [25/Sep/2026 20:19:25] "GET / HTTP/1.1" 200 -
 127.0.0.1 - - [25/Sep/2026 20:19:25] "GET /parametres HTTP/1.1" 200 -
 127.0.0.1 - - [25/Sep/2026 20:19:28] "GET /api/grid?s=0 HTTP/1.1" 200 -
+127.0.0.1 - - [25/Sep/2026 20:35:03] "GET /api/grid?s=0 HTTP/1.1" 200 -
+127.0.0.1 - - [25/Sep/2026 20:40:18] "GET /api/grid?s=0 HTTP/1.1" 200 -
+127.0.0.1 - - [25/Sep/2026 20:41:33] "GET /static/planning.js HTTP/1.1" 200 -
