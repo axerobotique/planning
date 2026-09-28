@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Empêche la traduction automatique du navigateur : elle mistraduit des
+       libellés métier ("Enregistrer" -> "Économiser") sans qu'on puisse le
+       corriger côté app. -->
+  <meta name="google" content="notranslate">
   <title>Planning atelier</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
 </head>

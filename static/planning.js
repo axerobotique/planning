@@ -427,22 +427,27 @@
         // ligne exacte, plus de tri automatique qui l'ignorerait au rendu
         // suivant.
         const targetSlot = Number(td.closest("tr").dataset.slot);
-        const resp = await fetch("/api/task/relocate", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            row: payload.row,
-            dates: sourceDates,
-            text: payload.text,
-            affaire: payload.affaire,
-            pending: payload.pending,
-            target_employee: td.dataset.employee,
-            target_slot: targetSlot,
-            date_start: newStart,
-            date_end: newEnd,
-            mode,
-          }),
-        });
-        const d = await resp.json();
+        let d;
+        try {
+          d = await fetchJSON("/api/task/relocate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              row: payload.row,
+              dates: sourceDates,
+              text: payload.text,
+              affaire: payload.affaire,
+              pending: payload.pending,
+              target_employee: td.dataset.employee,
+              target_slot: targetSlot,
+              date_start: newStart,
+              date_end: newEnd,
+              mode,
+            }),
+          });
+        } catch (err) {
+          showToast(err.message || "Erreur réseau.", "danger");
+          return;
+        }
         if (!d.ok) { showToast(d.error || "Erreur.", "danger"); return; }
         showToast(mode === "move" ? "Tâche déplacée." : "Tâche dupliquée.");
         await loadGrid();
@@ -700,10 +705,15 @@
       date_start: fDateStart.value,
       date_end: fDateEnd.value,
     };
-    const resp = await fetch("/api/task/save", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const d = await resp.json();
+    let d;
+    try {
+      d = await fetchJSON("/api/task/save", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+    } catch (err) {
+      showModalError(err.message || "Erreur réseau — le serveur ne répond pas.");
+      return;
+    }
     if (!d.ok) { showModalError(d.error || "Erreur."); return; }
     closeModal();
     showToast("Tâche enregistrée.");
@@ -719,11 +729,16 @@
     if (!confirm(msg)) return;
     const instances = [{ row: editing.row, dates: editing.oldDates }]
       .concat(editing.members.map((m) => ({ row: m.row, dates: m.old_dates })));
-    const resp = await fetch("/api/task/delete", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instances }),
-    });
-    const d = await resp.json();
+    let d;
+    try {
+      d = await fetchJSON("/api/task/delete", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instances }),
+      });
+    } catch (err) {
+      showModalError(err.message || "Erreur réseau — le serveur ne répond pas.");
+      return;
+    }
     if (!d.ok) { showModalError(d.error || "Erreur."); return; }
     closeModal();
     showToast("Tâche supprimée.");
@@ -750,21 +765,26 @@
       return;
     }
     for (const targetEmployee of employees) {
-      const resp = await fetch("/api/task/relocate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          row: editing.row,
-          dates: editing.oldDates,
-          text,
-          affaire: fAffaire.value.trim(),
-          pending: fPending.checked,
-          target_employee: targetEmployee,
-          date_start: fDateStart.value,
-          date_end: fDateEnd.value,
-          mode: "duplicate",
-        }),
-      });
-      const d = await resp.json();
+      let d;
+      try {
+        d = await fetchJSON("/api/task/relocate", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            row: editing.row,
+            dates: editing.oldDates,
+            text,
+            affaire: fAffaire.value.trim(),
+            pending: fPending.checked,
+            target_employee: targetEmployee,
+            date_start: fDateStart.value,
+            date_end: fDateEnd.value,
+            mode: "duplicate",
+          }),
+        });
+      } catch (err) {
+        showModalError(err.message || "Erreur réseau — le serveur ne répond pas.");
+        return;
+      }
       if (!d.ok) { showModalError(d.error || "Erreur."); return; }
     }
     closeModal();
