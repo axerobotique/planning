@@ -271,7 +271,8 @@
               </div>
             </th>`
           : "";
-        trs += `<tr class="${altCls}" data-employee="${esc(emp.name)}" data-slot="${s}">${nameCell}${cells}</tr>`;
+        const rowCls = s === 0 ? `${altCls} emp-first-row` : altCls;
+        trs += `<tr class="${rowCls}" data-employee="${esc(emp.name)}" data-slot="${s}">${nameCell}${cells}</tr>`;
       }
       return trs;
     }).join("");

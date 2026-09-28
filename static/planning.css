@@ -147,6 +147,14 @@ tbody tr.emp-b { background: #f2f3f5; }
 tbody tr.emp-a .col-name { background: #ffffff; }
 tbody tr.emp-b .col-name { background: #f2f3f5; }
 
+/* Trait épais au-dessus de la 1ère ligne de chaque bloc technicien, pour
+   marquer visuellement la séparation entre deux techniciens (au-delà du
+   simple zébrage emp-a/emp-b, peu visible d'un coup d'œil). */
+tbody tr.emp-first-row td,
+tbody tr.emp-first-row th.col-name {
+  border-top: 2px solid #9aa3b0;
+}
+
 .col-day {
   min-width: 92px;
   text-align: center;
