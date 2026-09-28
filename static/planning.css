@@ -193,6 +193,7 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
 .cell.drag-over { outline: 2px dashed #2472a4; outline-offset: -2px; background: #eaf3f8; }
 
 .task {
+  position: relative;
   border-radius: 4px;
   padding: 3px 5px;
   margin: 0 0 3px 0;
@@ -286,6 +287,29 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
   opacity: .85;
 }
 .task-expand:hover { opacity: 1; }
+
+/* Bouton de duplication rapide : masqué par défaut, révélé au survol de la
+   tâche pour ne pas surcharger visuellement la grille en permanence. */
+.task-duplicate {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .35);
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .1s;
+}
+.task:hover .task-duplicate { opacity: 1; }
+.task-duplicate:hover { background: rgba(255, 255, 255, .6); }
+.task-duplicate:disabled { cursor: default; opacity: .5; }
 
 .loading, .empty { text-align: center; color: #888; padding: 24px; }
 

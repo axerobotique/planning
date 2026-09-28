@@ -320,7 +320,15 @@
       const texteBlock = t.texte
         ? `<div class="task-texte">${esc(t.texte)}</div><button type="button" class="task-expand">▾ voir plus</button>`
         : "";
-      body = head + affaireTag + texteBlock;
+      // Bouton de duplication rapide au survol : évite de passer par la
+      // modale (clic -> cocher techniciens -> Dupliquer) pour le cas le plus
+      // fréquent, une copie du même jour pour le même technicien dans le
+      // prochain créneau libre. Masqué pour les tâches tronquées, dont la
+      // vraie étendue n'est pas connue ici (même garde-fou que le drag).
+      const duplicateBtn = t.truncated
+        ? ""
+        : '<button type="button" class="task-duplicate" title="Dupliquer cette tâche">⧉</button>';
+      body = duplicateBtn + head + affaireTag + texteBlock;
     }
     return `<div class="${cls.join(" ")}" draggable="${draggable}" style="${style}"${title}
         data-row="${t.row}" data-date-start="${t.date_start}" data-date-end="${t.date_end}"
@@ -375,6 +383,36 @@
         const taskEl = btn.closest(".task");
         const expanded = taskEl.classList.toggle("expanded");
         btn.textContent = expanded ? "▴ réduire" : "▾ voir plus";
+      });
+    });
+
+    gridRoot.querySelectorAll(".task-duplicate").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const el = btn.closest(".task");
+        btn.disabled = true;
+        try {
+          const d = await fetchJSON("/api/task/relocate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              row: Number(el.dataset.row),
+              dates: isoRange(el.dataset.dateStart, el.dataset.dateEnd),
+              text: el.dataset.text,
+              affaire: el.dataset.affaire,
+              pending: el.dataset.pending === "1",
+              target_employee: el.dataset.employee,
+              date_start: el.dataset.dateStart,
+              date_end: el.dataset.dateEnd,
+              mode: "duplicate",
+            }),
+          });
+          if (!d.ok) throw new Error(d.error || "Erreur.");
+          showToast("Tâche dupliquée.");
+          await loadGrid();
+        } catch (err) {
+          showToast(err.message || "Erreur.", "danger");
+          btn.disabled = false;
+        }
       });
     });
 
