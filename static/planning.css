@@ -2,7 +2,7 @@
   color-scheme: light;
   --border: #d9dde3;
   --today: #fff4d6;
-  --weekend: #f4f5f7;
+  --weekend: #e3e5e9;
   --text: #1f2430;
 }
 
@@ -196,6 +196,10 @@ tbody tr.emp-first-row th.col-name {
 
 .is-weekend { background: var(--weekend); }
 .is-today { background: var(--today) !important; }
+
+.col-day.is-weekend, .cell.is-weekend { min-width: 46px; width: 46px; }
+#grid-root.zoomed-out .col-day.is-weekend,
+#grid-root.zoomed-out .cell.is-weekend { min-width: 28px; width: 28px; }
 
 .cell { min-width: 92px; cursor: pointer; }
 .cell.drag-over { outline: 2px dashed #2472a4; outline-offset: -2px; background: #eaf3f8; }
