@@ -1,6 +1,7 @@
 :root {
   color-scheme: light;
   --border: #d9dde3;
+  --border-v: #ebedf1;
   --today: #fff4d6;
   --weekend: #e3e5e9;
   --text: #1f2430;
@@ -77,14 +78,17 @@ body {
   background: #fff;
 }
 
+/* Pas de min-width:100% : la table garde la largeur fixe de ses colonnes
+   (cf. .col-day/.cell) au lieu de s'étirer pour remplir le conteneur — c'est
+   le nombre de semaines chargées (planning.js) qui s'adapte à la place
+   disponible, jamais la largeur des colonnes. */
 table.planning {
   border-collapse: collapse;
-  min-width: 100%;
 }
 
 table.planning th, table.planning td {
   border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-v);
   padding: 6px;
   vertical-align: top;
   font-size: 12px;
@@ -152,7 +156,7 @@ tbody tr.emp-b .col-name { background: #f2f3f5; }
    simple zébrage emp-a/emp-b, peu visible d'un coup d'œil). */
 tbody tr.emp-first-row td,
 tbody tr.emp-first-row th.col-name {
-  border-top: 2px solid #9aa3b0;
+  border-top: 3px solid #5b6472;
 }
 
 .col-day {
@@ -164,13 +168,9 @@ tbody tr.emp-first-row th.col-name {
 .col-day .dow { font-weight: 600; font-size: 11px; color: #667; }
 .col-day .date { font-size: 12px; }
 
-/* Vue "dézoomée" (plus de semaines affichées) : colonnes resserrées pour
-   limiter le scroll horizontal, au prix d'un texte de tâche plus tronqué. */
-#grid-root.zoomed-out .col-day,
-#grid-root.zoomed-out .cell {
-  min-width: 56px;
-}
-
+/* Vue "dézoomée" (plus de semaines affichées) : largeur de colonne
+   inchangée (demande explicite), donc davantage de scroll horizontal — on
+   compense juste par un texte de tâche plus dense/tronqué. */
 #grid-root.zoomed-out table.planning th,
 #grid-root.zoomed-out table.planning td {
   padding: 4px;
@@ -198,8 +198,6 @@ tbody tr.emp-first-row th.col-name {
 .is-today { background: var(--today) !important; }
 
 .col-day.is-weekend, .cell.is-weekend { min-width: 46px; width: 46px; }
-#grid-root.zoomed-out .col-day.is-weekend,
-#grid-root.zoomed-out .cell.is-weekend { min-width: 28px; width: 28px; }
 
 .cell { min-width: 92px; cursor: pointer; }
 .cell.drag-over { outline: 2px dashed #2472a4; outline-offset: -2px; background: #eaf3f8; }
@@ -324,6 +322,12 @@ tbody tr.emp-first-row th.col-name {
 .task-duplicate:disabled { cursor: default; opacity: .5; }
 
 .loading, .empty { text-align: center; color: #888; padding: 24px; }
+
+/* Retour visuel immédiat au clic (semaine préc./suiv., saut de date, zoom) :
+   la grille s'estompe dès le clic plutôt que de rester figée sans aucun
+   changement pendant l'aller-retour réseau vers Sheets — sans ça, un clic
+   "en rafale" donne l'impression que rien ne s'est passé. */
+#grid-root.is-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.1s linear; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(20, 24, 32, .45);

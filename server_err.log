@@ -8,3 +8,8 @@ Press CTRL+C to quit
 127.0.0.1 - - [28/Sep/2026 11:14:08] "GET /static/planning.css HTTP/1.1" 200 -
 127.0.0.1 - - [28/Sep/2026 11:14:08] "GET /static/planning.js HTTP/1.1" 200 -
 127.0.0.1 - - [28/Sep/2026 11:14:11] "GET /api/grid?s=0&w=3 HTTP/1.1" 200 -
+127.0.0.1 - - [28/Sep/2026 11:24:51] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/Sep/2026 11:25:02] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/Sep/2026 11:25:02] "GET /static/planning.css HTTP/1.1" 200 -
+127.0.0.1 - - [28/Sep/2026 11:25:02] "GET /static/planning.js HTTP/1.1" 200 -
+127.0.0.1 - - [28/Sep/2026 11:25:05] "GET /api/grid?s=0&w=3 HTTP/1.1" 200 -

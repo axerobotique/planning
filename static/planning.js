@@ -28,13 +28,41 @@
 
   let weekOffset = window.PLANNING_WEEK_OFFSET || 0;
 
-  // Zoom = nombre de semaines affichées. Deux paliers seulement (vue par
-  // défaut resserrée / vue élargie) : suffisant pour le besoin ("voir plus
-  // de semaines" puis revenir au réglage par défaut), pas besoin d'un
-  // contrôle continu.
+  // Largeurs de colonnes, synchronisées avec planning.css (.col-day/.cell et
+  // .col-name) : elles ne changent jamais avec la taille d'écran — c'est le
+  // nombre de semaines chargées qui s'adapte à la place disponible, pas
+  // l'inverse (sinon les colonnes s'étirent/rétrécissent selon l'écran).
+  const DAY_WIDTH = 92;
+  const WEEKEND_WIDTH = 46;
+  const NAME_COL_WIDTH = 130;
+  const WEEK_WIDTH = DAY_WIDTH * 5 + WEEKEND_WIDTH * 2;
+
   const WEEKS_DEFAULT = window.PLANNING_WEEKS_SHOWN || 3;
-  const WEEKS_ZOOMED_OUT = WEEKS_DEFAULT * 2;
-  let weeksShown = WEEKS_DEFAULT;
+  const WEEKS_MAX = window.PLANNING_WEEKS_MAX || 12;
+
+  // Nombre de semaines qui tiennent dans la largeur dispo du conteneur à
+  // largeur de colonne fixe (ci-dessus), borné à [WEEKS_DEFAULT, WEEKS_MAX] :
+  // sur un grand écran on affiche plus de semaines plutôt que d'étirer les
+  // colonnes existantes ; sur un petit écran on garde au moins WEEKS_DEFAULT
+  // (quitte à scroller horizontalement, cf. .table-wrap { overflow-x: auto }).
+  function fitWeeksCount() {
+    const wrap = document.querySelector(".table-wrap");
+    if (!wrap) return WEEKS_DEFAULT;
+    const available = wrap.clientWidth - NAME_COL_WIDTH;
+    const fit = Math.floor(available / WEEK_WIDTH);
+    return Math.max(WEEKS_DEFAULT, Math.min(fit, WEEKS_MAX));
+  }
+
+  // Le bouton "zoom" ne rétrécit plus les colonnes (largeur toujours fixe) :
+  // il force simplement le double du nombre de semaines qui tiennent à
+  // l'écran, quitte à scroller horizontalement.
+  let zoomedOut = false;
+  function targetWeeksShown() {
+    const base = fitWeeksCount();
+    return zoomedOut ? Math.min(WEEKS_MAX, base * 2) : base;
+  }
+
+  let weeksShown = targetWeeksShown();
   let currentData = null;
   let modalOpen = false;
   let dragging = false;
@@ -117,9 +145,15 @@
   // Fetch avec timeout explicite : sans ça, un appel réseau qui ne répond
   // jamais (Sheets API lente/indisponible) laisse l'UI bloquée indéfiniment
   // sur "Chargement…" sans aucun retour à l'utilisateur.
+  // 30s (et non 15s) : une écriture (ex. déplacement d'une tâche) enchaîne
+  // côté serveur plusieurs appels Sheets séquentiels, chacun pouvant aller
+  // jusqu'à REQUEST_TIMEOUT_SECONDS=30s (cf. sheets_client.py) — un timeout
+  // client plus court que ça abandonnait prématurément une requête encore
+  // légitimement en cours côté serveur ("Délai dépassé" affiché à tort,
+  // alors que l'écriture pouvait aboutir malgré tout).
   async function fetchJSON(url, opts, timeoutMs) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs || 15000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs || 30000);
     try {
       const resp = await fetch(url, { ...(opts || {}), signal: controller.signal });
       return await resp.json();
@@ -133,14 +167,37 @@
     }
   }
 
+  // Compteur de requête : si deux loadGrid() se chevauchent (clics rapides sur
+  // "semaine suiv." par ex.), seule la réponse de la dernière requête lancée
+  // est appliquée — sinon une réponse plus ancienne arrivant après peut
+  // écraser à l'écran l'état plus récent (résultats hors ordre).
+  let loadSeq = 0;
+
   async function loadGrid() {
-    const resp = await fetch(`/api/grid?s=${encodeURIComponent(weekOffset)}&w=${encodeURIComponent(weeksShown)}`);
-    const data = await resp.json();
-    currentData = data;
-    renderLegend(data.legend);
-    renderGrid(data);
-    updateZoomButton();
-    if (data.days && data.days.length) dateJump.value = data.days[0].iso;
+    const seq = ++loadSeq;
+    gridRoot.classList.add("is-loading");
+    setNavDisabled(true);
+    try {
+      const resp = await fetch(`/api/grid?s=${encodeURIComponent(weekOffset)}&w=${encodeURIComponent(weeksShown)}`);
+      const data = await resp.json();
+      if (seq !== loadSeq) return; // une requête plus récente a pris le dessus
+      currentData = data;
+      renderLegend(data.legend);
+      renderGrid(data);
+      updateZoomButton();
+      if (data.days && data.days.length) dateJump.value = data.days[0].iso;
+    } finally {
+      if (seq === loadSeq) {
+        gridRoot.classList.remove("is-loading");
+        setNavDisabled(false);
+      }
+    }
+  }
+
+  function setNavDisabled(disabled) {
+    ["btn-prev", "btn-next", "btn-today", "btn-zoom"].forEach((id) => {
+      document.getElementById(id).disabled = disabled;
+    });
   }
 
   // Lundi (Python weekday()==0) de la semaine contenant `d`, construit à
@@ -168,11 +225,10 @@
 
   function updateZoomButton() {
     const btn = document.getElementById("btn-zoom");
-    const zoomedOut = weeksShown > WEEKS_DEFAULT;
     btn.textContent = zoomedOut ? "+ Zoomer" : "− Dézoomer";
     btn.title = zoomedOut
-      ? `Revenir à la vue par défaut (${WEEKS_DEFAULT} semaines)`
-      : `Afficher plus de semaines (${WEEKS_ZOOMED_OUT})`;
+      ? "Revenir à la vue par défaut"
+      : "Afficher plus de semaines (scroll horizontal)";
     gridRoot.classList.toggle("zoomed-out", zoomedOut);
   }
 
@@ -865,8 +921,25 @@
   document.getElementById("btn-today").addEventListener("click", () => { weekOffset = 0; loadGrid(); });
   dateJump.addEventListener("change", () => jumpToDate(dateJump.value));
   document.getElementById("btn-zoom").addEventListener("click", () => {
-    weeksShown = weeksShown > WEEKS_DEFAULT ? WEEKS_DEFAULT : WEEKS_ZOOMED_OUT;
+    zoomedOut = !zoomedOut;
+    weeksShown = targetWeeksShown();
     loadGrid();
+  });
+
+  // Redimensionnement (plein écran, changement d'écran, panneau latéral…) :
+  // recalcule combien de semaines tiennent à largeur de colonne fixe et
+  // recharge seulement si ça change le nombre de semaines à afficher.
+  // Debounce 200ms pour ne pas spammer l'API pendant un drag de fenêtre.
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const next = targetWeeksShown();
+      if (next !== weeksShown) {
+        weeksShown = next;
+        loadGrid();
+      }
+    }, 200);
   });
   document.getElementById("btn-new").addEventListener("click", () => {
     const today = new Date().toISOString().slice(0, 10);

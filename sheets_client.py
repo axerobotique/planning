@@ -118,6 +118,47 @@ def get_range(range_a1: str, sheet: str | None = None) -> list[list[str]]:
     return _cached(key, loader)
 
 
+def get_ranges(ranges_a1: list[str], sheet: str | None = None) -> dict[str, list[list[str]]]:
+    """Lit plusieurs plages A1 en un seul appel API (batchGet) plutôt qu'un
+    get_range séquentiel par plage : c'était le principal facteur de latence
+    perçue au clic (changement de semaine, sauvegarde/déplacement de tâche...),
+    chaque plage manquante du cache ajoutant un aller-retour réseau complet vers
+    l'API Sheets (cf. `build_grid`, jusqu'à 5 plages par chargement de grille).
+    Renvoie un dict indexé par plage d'entrée ; les plages déjà en cache ne
+    déclenchent aucun appel réseau."""
+    sheet = sheet or SHEET_NAME
+    now = time.time()
+    result: dict[str, list[list[str]]] = {}
+    missing: list[str] = []
+    with _cache_lock:
+        for r in ranges_a1:
+            hit = _cache.get(f"values::{sheet}::{r}")
+            if hit and now - hit[0] < CACHE_TTL_SECONDS:
+                result[r] = hit[1]
+            else:
+                missing.append(r)
+
+    if missing:
+        resp = (
+            _get_service()
+            .spreadsheets()
+            .values()
+            .batchGet(
+                spreadsheetId=SPREADSHEET_ID,
+                ranges=[f"'{sheet}'!{r}" for r in missing],
+                valueRenderOption="FORMATTED_VALUE",
+            )
+            .execute()
+        )
+        with _cache_lock:
+            for r, value_range in zip(missing, resp.get("valueRanges", [])):
+                values = value_range.get("values", [])
+                result[r] = values
+                _cache[f"values::{sheet}::{r}"] = (now, values)
+
+    return result
+
+
 def _invalidate_cache() -> None:
     with _cache_lock:
         _cache.clear()
@@ -131,6 +172,26 @@ def update_range(range_a1: str, values: list[list[str]], sheet: str | None = Non
         range=f"'{sheet}'!{range_a1}",
         valueInputOption="RAW",
         body={"values": values},
+    ).execute()
+    _invalidate_cache()
+
+
+def batch_update_ranges(updates: list[tuple[str, list[list[str]]]], sheet: str | None = None) -> None:
+    """Écrit plusieurs plages A1 en un seul appel API (values.batchUpdate),
+    pour les cas où plusieurs update_range/clear_ranges seraient sinon
+    enchaînés séquentiellement (ex. déplacement d'une tâche : vider l'ancienne
+    case ET écrire la nouvelle) — c'était le principal facteur de latence
+    perçue sur un glisser-déposer, voire de faux "Délai dépassé" côté client
+    quand la chaîne d'appels dépassait son timeout."""
+    if not updates:
+        return
+    sheet = sheet or SHEET_NAME
+    _get_service().spreadsheets().values().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "valueInputOption": "RAW",
+            "data": [{"range": f"'{sheet}'!{range_a1}", "values": values} for range_a1, values in updates],
+        },
     ).execute()
     _invalidate_cache()
 

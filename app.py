@@ -465,12 +465,29 @@ def place_task(employee: str, d_start: date, d_end: date, text: str) -> int:
     return target_row
 
 
-def place_task_at_slot(employee: str, slot: int, d_start: date, d_end: date, text: str) -> int:
+def place_task_at_slot(
+    employee: str,
+    slot: int,
+    d_start: date,
+    d_end: date,
+    text: str,
+    clear_source: tuple[int, list[date]] | None = None,
+) -> int:
     """Comme `place_task`, mais écrit dans la ligne (slot) exacte demandée
     plutôt que la première ligne libre — pour que le glisser-déposer vers une
     ligne précise soit respecté (cf. plus de tri auto par durée dans
     `build_grid`). Étend le bloc du technicien si le slot demandé n'existe
-    pas encore, échoue si la ligne est déjà occupée sur la période."""
+    pas encore, échoue si la ligne est déjà occupée sur la période.
+
+    `clear_source` (row, dates) : cellules source à vider (cas d'un
+    déplacement). Quand aucune insertion de ligne n'est nécessaire, cet
+    effacement est fusionné dans le même appel Sheets que l'écriture de la
+    nouvelle case, au lieu d'un aller-retour réseau séparé — c'était la
+    principale source de latence (et de faux "Délai dépassé" côté client)
+    sur un glisser-déposer. Si une insertion de ligne est nécessaire, la
+    fusion n'est pas sûre (l'insertion décale les numéros de ligne sous le
+    point d'insertion) : la case source est alors vidée en premier, comme
+    avant cette optimisation."""
     text = text.strip()
     if not text:
         raise PlanningError("Le texte de la tâche est vide.")
@@ -486,6 +503,10 @@ def place_task_at_slot(employee: str, slot: int, d_start: date, d_end: date, tex
     col_start_letter, col_end_letter = col_letter(col_start), col_letter(col_end)
 
     block_height = block["end_row"] - block["start_row"] + 1
+    needs_insert = slot >= block_height
+    if needs_insert and clear_source is not None:
+        clear_task(*clear_source)
+        clear_source = None
     while slot >= block_height:
         sheets_client.insert_row_before(block["end_row"] + 1)
         block["end_row"] += 1
@@ -494,13 +515,30 @@ def place_task_at_slot(employee: str, slot: int, d_start: date, d_end: date, tex
     target_row = block["start_row"] + slot
     existing = sheets_client.get_range(f"{col_start_letter}{target_row}:{col_end_letter}{target_row}")
     row_vals = existing[0] if existing else []
-    if any((row_vals[k].strip() if k < len(row_vals) and row_vals[k] else "") for k in range(len(cols))):
-        raise PlanningError("Cette ligne est déjà occupée sur cette période.")
+    # Colonnes de la case source sur cette même ligne : si la tâche est
+    # déplacée sur (une partie de) sa propre case, le contenu qu'on y lit
+    # encore est le sien — à ne pas compter comme une occupation par une
+    # AUTRE tâche (la lecture a lieu avant l'effacement, fusionné plus bas).
+    own_cols = {col_for_date(d) for d in clear_source[1]} if clear_source and clear_source[0] == target_row else set()
+    for idx, c in enumerate(cols):
+        val = row_vals[idx].strip() if idx < len(row_vals) and row_vals[idx] else ""
+        if val and c not in own_cols:
+            raise PlanningError("Cette ligne est déjà occupée sur cette période.")
 
-    sheets_client.update_range(
-        f"{col_start_letter}{target_row}:{col_end_letter}{target_row}",
-        [[text] * len(cols)],
-    )
+    updates = [(f"{col_start_letter}{target_row}:{col_end_letter}{target_row}", [[text] * len(cols)])]
+    if clear_source is not None:
+        src_row, src_dates = clear_source
+        src_cols = [col_for_date(d) for d in src_dates]
+        src_start, src_end = min(src_cols), max(src_cols)
+        # Déposer une tâche sur sa propre case (pas de déplacement réel) :
+        # ne pas ajouter une 2e écriture qui écraserait celle qu'on vient de
+        # poser plus haut dans `updates`.
+        overlaps_target = src_row == target_row and src_start <= col_end and src_end >= col_start
+        if not overlaps_target:
+            updates.append(
+                (f"{col_letter(src_start)}{src_row}:{col_letter(src_end)}{src_row}", [[""] * len(src_cols)])
+            )
+    sheets_client.batch_update_ranges(updates)
     return target_row
 
 
@@ -560,11 +598,10 @@ def build_grid(week_offset: int, codes: dict | None = None, weeks: int = WEEKS_S
     col_start_letter = col_letter(SHEET_START_COL + start_offset)
     col_end_letter = col_letter(SHEET_START_COL + end_offset)
 
-    names_rows = sheets_client.get_range(f"C{FIRST_EMPLOYEE_ROW}:C{sheet_last_row()}")
-    data_rows = sheets_client.get_range(
-        f"{col_start_letter}{FIRST_EMPLOYEE_ROW}:{col_end_letter}{sheet_last_row()}"
-    )
-    date_check = sheets_client.get_range(f"{col_start_letter}3:{col_start_letter}3")
+    last_row = sheet_last_row()
+    names_range = f"C{FIRST_EMPLOYEE_ROW}:C{last_row}"
+    data_range = f"{col_start_letter}{FIRST_EMPLOYEE_ROW}:{col_end_letter}{last_row}"
+    date_check_range = f"{col_start_letter}3:{col_start_letter}3"
 
     # Une tâche peut s'étendre au-delà de la fenêtre affichée (ex : astreinte
     # à durée indéterminée). On lit 1 colonne de part et d'autre pour savoir
@@ -573,14 +610,26 @@ def build_grid(week_offset: int, codes: dict | None = None, weeks: int = WEEKS_S
     # étendue et écrase/duplique la mauvaise plage dans le sheet.
     before_col = SHEET_START_COL + start_offset - 1
     after_col = SHEET_START_COL + end_offset + 1
-    before_rows = (
-        sheets_client.get_range(f"{col_letter(before_col)}{FIRST_EMPLOYEE_ROW}:{col_letter(before_col)}{sheet_last_row()}")
-        if before_col >= SHEET_START_COL else []
+    before_range = (
+        f"{col_letter(before_col)}{FIRST_EMPLOYEE_ROW}:{col_letter(before_col)}{last_row}"
+        if before_col >= SHEET_START_COL else None
     )
-    after_rows = (
-        sheets_client.get_range(f"{col_letter(after_col)}{FIRST_EMPLOYEE_ROW}:{col_letter(after_col)}{sheet_last_row()}")
-        if after_col <= SHEET_START_COL + max_offset else []
+    after_range = (
+        f"{col_letter(after_col)}{FIRST_EMPLOYEE_ROW}:{col_letter(after_col)}{last_row}"
+        if after_col <= SHEET_START_COL + max_offset else None
     )
+
+    # Un seul appel API (batchGet) pour les jusqu'à 5 plages ci-dessus plutôt
+    # que 5 allers-retours séquentiels vers l'API Sheets — c'était le premier
+    # facteur de lenteur perçue au clic (changement de semaine, sauvegarde/
+    # déplacement de tâche, qui rechargent tous la grille).
+    wanted = [r for r in [names_range, data_range, date_check_range, before_range, after_range] if r]
+    fetched = sheets_client.get_ranges(wanted)
+    names_rows = fetched[names_range]
+    data_rows = fetched[data_range]
+    date_check = fetched[date_check_range]
+    before_rows = fetched[before_range] if before_range else []
+    after_rows = fetched[after_range] if after_range else []
 
     warning = None
     expected = date_for_offset(start_offset).strftime("%d/%m")
@@ -808,7 +857,13 @@ def planning():
     except ValueError:
         week_offset = 0
     weeks = _parse_weeks(request.args.get("w"))
-    return render_template("planning.html", week_offset=week_offset, weeks=weeks, legend=read_codes())
+    return render_template(
+        "planning.html",
+        week_offset=week_offset,
+        weeks=weeks,
+        weeks_max=WEEKS_SHOWN_MAX,
+        legend=read_codes(),
+    )
 
 
 @app.route("/parametres")
@@ -994,8 +1049,6 @@ def api_task_relocate():
         if mode not in ("move", "duplicate"):
             raise PlanningError(f"Mode inconnu : {mode!r}")
 
-        if mode == "move":
-            clear_task(row, dates)
         # Le glisser-déposer agit toujours sur une seule instance : si la
         # tâche source faisait partie d'un groupe multi-technicien, cette
         # copie s'en détache (pas de propagation du déplacement aux autres
@@ -1005,9 +1058,16 @@ def api_task_relocate():
         # depuis la grille) ; sinon on retombe sur la 1ère ligne libre (ex:
         # duplication sans info de ligne cible).
         raw_text = with_markers(text, affaire, pending=pending)
+        clear_source = (row, dates) if mode == "move" else None
         if target_slot is not None:
-            place_task_at_slot(target_employee, int(target_slot), d_start, d_end, raw_text)
+            # L'effacement de la source est fusionné dans l'écriture cible
+            # par `place_task_at_slot` (1 aller-retour réseau au lieu de 2) —
+            # cf. docstring de `place_task_at_slot` pour le cas limite où ce
+            # n'est pas sûr (insertion de ligne nécessaire).
+            place_task_at_slot(target_employee, int(target_slot), d_start, d_end, raw_text, clear_source=clear_source)
         else:
+            if clear_source is not None:
+                clear_task(*clear_source)
             place_task(target_employee, d_start, d_end, raw_text)
         return jsonify({"ok": True})
     except PlanningError as e:
