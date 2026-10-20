@@ -184,6 +184,11 @@
       currentData = data;
       renderLegend(data.legend);
       renderGrid(data);
+      // Bandeaux sous les noms recréés avec la grille ; la barre est
+      // re-rendue pour que ses sélecteurs d'affectation listent les
+      // techniciens (inconnus avant le 1er chargement de grille).
+      renderEmployeeTasks();
+      if (!notifHover) renderNotifications(notifData);
       updateZoomButton();
       if (data.days && data.days.length) dateJump.value = data.days[0].iso;
     } finally {
@@ -325,6 +330,7 @@
                   <button type="button" class="emp-row-btn emp-row-add" data-employee="${esc(emp.name)}" title="Ajouter une ligne">+</button>
                 </span>
               </div>
+              <div class="emp-tasks" data-employee="${esc(emp.name)}"></div>
             </th>`
           : "";
         const rowCls = s === 0 ? `${altCls} emp-first-row` : altCls;
@@ -947,6 +953,284 @@
     openCreateModal(firstEmployee, today);
   });
 
+  // --- Barre latérale "Tâches par affaire" (lecture seule) ---
+  // Source : onglet "Affaires - Tâches" (cf. read_affaires_notifications
+  // côté serveur). Défile en continu pour garder les tâches ouvertes sous les
+  // yeux ; le survol, le focus ou le bouton pause figent le défilement pour
+  // pouvoir lire/scroller à la main.
+  const notifEl = document.getElementById("notif");
+  const notifRoot = document.getElementById("notif-root");
+  const notifScroll = document.getElementById("notif-scroll");
+  const notifCount = document.getElementById("notif-count");
+  const notifToggle = document.getElementById("notif-toggle");
+  const notifPauseBtn = document.getElementById("notif-pause");
+  const NOTIF_REFRESH_MS = 120000;
+  const NOTIF_SPEED_PX_PER_S = 18;
+  const NOTIF_EDGE_PAUSE_MS = 3000;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function storageGet(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function storageSet(key, val) {
+    try { localStorage.setItem(key, val); } catch (e) { /* stockage indisponible */ }
+  }
+
+  let notifHover = false;
+  let notifUserPaused = reducedMotion || storageGet("notif-paused") === "1";
+  let notifEdgeUntil = 0;
+  let notifPos = 0; // position fractionnaire : scrollTop arrondit au pixel
+
+  function formatFrDate(iso) {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y.slice(2)}`;
+  }
+
+  function statutClass(statut) {
+    const s = statut.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    if (s === "planifie") return "st-planifie";
+    if (s === "a planifier") return "st-a-planifier";
+    return "";
+  }
+
+  // Le sheet peut contenir "THOMAS RIES" quand le planning affiche "THOMAS" :
+  // correspondance sur le nom complet ou sur le 1er mot.
+  function matchEmployee(assigne) {
+    const a = (assigne || "").trim().toUpperCase();
+    if (!a) return "";
+    const names = (currentData && currentData.employees || []).map((e) => e.name);
+    return names.find((n) => n.toUpperCase() === a)
+      || names.find((n) => n.toUpperCase() === a.split(/\s+/)[0])
+      || "";
+  }
+
+  function notifAssigneeOptions(assigne) {
+    const names = (currentData && currentData.employees || []).map((e) => e.name);
+    const matched = matchEmployee(assigne);
+    // Valeur du sheet sans technicien correspondant : conservée telle quelle
+    // dans la liste plutôt que d'afficher "—" à tort.
+    const extra = assigne && !matched ? `<option value="${esc(assigne)}" selected>${esc(assigne)}</option>` : "";
+    return `<option value="">— Non affectée</option>${extra}` + names.map((n) =>
+      `<option value="${esc(n)}" ${n === matched ? "selected" : ""}>${esc(n)}</option>`
+    ).join("");
+  }
+
+  async function updateNotification(row, texte, changes) {
+    const d = await fetchJSON("/api/affaires/notifications/update", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ row, texte, ...changes }),
+    });
+    if (!d.ok) {
+      await loadNotifications(); // ligne décalée côté sheet : on resynchronise
+      throw new Error(d.error || "Erreur.");
+    }
+    applyNotifications(d.affaires || []);
+  }
+
+  // Délégation d'événements (barre + bandeaux sous les noms) : les deux
+  // listes sont re-rendues à chaque rafraîchissement.
+  function bindNotifActions(root) {
+    root.addEventListener("change", async (e) => {
+      const sel = e.target.closest(".notif-assign");
+      if (!sel) return;
+      const li = sel.closest("[data-row]");
+      sel.disabled = true;
+      try {
+        await updateNotification(Number(li.dataset.row), li.dataset.texte, { assigne: sel.value });
+        showToast(sel.value ? `Tâche affectée à ${sel.value}.` : "Affectation retirée.");
+      } catch (err) {
+        showToast(err.message || "Erreur.", "danger");
+        sel.disabled = false;
+      }
+    });
+    root.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".notif-done");
+      if (!btn) return;
+      e.stopPropagation();
+      const li = btn.closest("[data-row]");
+      btn.disabled = true;
+      try {
+        await updateNotification(Number(li.dataset.row), li.dataset.texte, { done: true });
+        showToast("Tâche validée.");
+      } catch (err) {
+        showToast(err.message || "Erreur.", "danger");
+        btn.disabled = false;
+      }
+    });
+  }
+
+  let notifData = [];
+  const empTasksOpen = new Set(); // bandeaux dépliés, conservés entre rendus
+
+  function applyNotifications(affaires) {
+    notifData = affaires;
+    renderNotifications(affaires);
+    renderEmployeeTasks();
+  }
+
+  // Bandeau sous le nom de chaque technicien : ses tâches d'affaire
+  // ouvertes, repliées par défaut (compteur seul) pour ne pas gonfler la
+  // hauteur des lignes de la grille.
+  function renderEmployeeTasks() {
+    const byEmp = {};
+    notifData.forEach((a) => a.open.forEach((t) => {
+      const emp = matchEmployee(t.assigne);
+      if (emp) (byEmp[emp] = byEmp[emp] || []).push({ ...t, affaire: a });
+    }));
+    gridRoot.querySelectorAll(".emp-tasks").forEach((box) => {
+      const emp = box.dataset.employee;
+      const tasks = byEmp[emp] || [];
+      if (!tasks.length) { box.innerHTML = ""; return; }
+      const overdue = tasks.filter((t) => t.overdue).length;
+      const items = tasks.map((t) => `
+        <li data-row="${t.row}" data-texte="${esc(t.texte)}">
+          <span class="emp-task-aff">${esc(t.affaire.entreprise)}${t.affaire.numero ? " #" + esc(t.affaire.numero) : ""}</span>
+          <span class="emp-task-txt">${esc(t.texte)}</span>
+          ${t.deadline ? `<span class="notif-tag ${t.overdue ? "overdue" : (t.soon ? "soon" : "")}">${t.overdue ? "⚠ " : "⏱ "}${esc(formatFrDate(t.deadline))}</span>` : ""}
+          <button type="button" class="notif-done" title="Valider (marquer Terminé)">✓</button>
+        </li>`).join("");
+      box.innerHTML = `<details ${empTasksOpen.has(emp) ? "open" : ""}>
+          <summary class="${overdue ? "has-overdue" : ""}">📋 ${tasks.length} tâche${tasks.length > 1 ? "s" : ""}${overdue ? ` · ${overdue} en retard` : ""}</summary>
+          <ul>${items}</ul>
+        </details>`;
+      box.querySelector("details").addEventListener("toggle", (e) => {
+        if (e.target.open) empTasksOpen.add(emp); else empTasksOpen.delete(emp);
+      });
+    });
+  }
+
+  function renderNotifications(affaires) {
+    const openTotal = affaires.reduce((n, a) => n + a.open.length, 0);
+    const overdueTotal = affaires.reduce((n, a) => n + a.overdue, 0);
+    notifCount.textContent = openTotal ? String(openTotal) : "";
+    notifCount.classList.toggle("has-overdue", overdueTotal > 0);
+    notifCount.title = `${openTotal} tâche(s) ouverte(s)` + (overdueTotal ? `, dont ${overdueTotal} en retard` : "");
+
+    if (!affaires.length) {
+      notifRoot.innerHTML = '<p class="notif-empty">Aucune tâche ouverte. 🎉</p>';
+      return;
+    }
+    notifRoot.innerHTML = affaires.map((a) => {
+      const pct = a.total ? Math.round((a.done / a.total) * 100) : 0;
+      const tasks = a.open.map((t) => {
+        const tags = [];
+        if (t.statut) tags.push(`<span class="notif-tag ${statutClass(t.statut)}">${esc(t.statut)}</span>`);
+        if (t.assigne) tags.push(`<span class="notif-tag">👤 ${esc(t.assigne)}</span>`);
+        if (t.deadline) {
+          const cls = t.overdue ? "overdue" : (t.soon ? "soon" : "");
+          tags.push(`<span class="notif-tag ${cls}">${t.overdue ? "⚠ " : "⏱ "}${esc(formatFrDate(t.deadline))}</span>`);
+        }
+        return `<li data-row="${t.row}" data-texte="${esc(t.texte)}">${esc(t.texte)}
+            <div class="notif-meta">${tags.join("")}</div>
+            <div class="notif-actions">
+              <select class="notif-assign" title="Affecter à">${notifAssigneeOptions(t.assigne)}</select>
+              <button type="button" class="notif-done" title="Valider (marquer Terminé)">✓ Valider</button>
+            </div>
+          </li>`;
+      }).join("");
+      return `<section class="notif-aff${a.overdue ? " has-overdue" : ""}">
+          <div class="notif-aff-head">
+            <span class="notif-aff-name">${esc(a.entreprise)}</span>
+            ${a.numero ? `<span class="notif-aff-num">#${esc(a.numero)}</span>` : ""}
+          </div>
+          ${a.sujet ? `<div class="notif-aff-sujet">${esc(a.sujet)}</div>` : ""}
+          <div class="notif-progress" title="${a.done} terminée(s) sur ${a.total}">
+            <div class="notif-bar"><span style="width:${pct}%"></span></div>
+            <span class="notif-pct">${a.done}/${a.total} · ${pct}%</span>
+          </div>
+          <ul class="notif-tasks">${tasks}</ul>
+        </section>`;
+    }).join("");
+  }
+
+  async function loadNotifications() {
+    try {
+      const d = await fetchJSON("/api/affaires/notifications");
+      if (!d.ok) throw new Error(d.error || "Erreur de chargement.");
+      applyNotifications(d.affaires || []);
+    } catch (e) {
+      // On garde la dernière liste affichée si elle existe : une erreur
+      // réseau ponctuelle ne doit pas vider la barre.
+      if (!notifRoot.querySelector(".notif-aff")) {
+        notifRoot.innerHTML = `<p class="notif-empty">${esc(e.message || "Erreur de chargement.")}</p>`;
+      }
+    }
+  }
+
+  function updatePauseButton() {
+    notifPauseBtn.classList.toggle("is-paused", notifUserPaused);
+    notifPauseBtn.innerHTML = notifUserPaused ? "&#9654;" : "&#10074;&#10074;";
+    notifPauseBtn.title = notifUserPaused ? "Reprendre le défilement" : "Mettre en pause le défilement";
+  }
+
+  let notifLastTs = null;
+  function notifTick(ts) {
+    const dt = notifLastTs == null ? 0 : (ts - notifLastTs) / 1000;
+    notifLastTs = ts;
+    const max = notifScroll.scrollHeight - notifScroll.clientHeight;
+    const active = !notifUserPaused && !notifHover && !notifEl.classList.contains("collapsed")
+      && max > 0 && ts >= notifEdgeUntil;
+    if (active) {
+      notifPos = Math.min(max, notifPos + NOTIF_SPEED_PX_PER_S * dt);
+      if (notifPos >= max) {
+        // Arrivé en bas : courte pause, puis retour en haut (et nouvelle
+        // pause pour laisser lire la 1ère affaire). Infinity tant que le
+        // retour n'a pas eu lieu, pour ne pas le programmer deux fois.
+        notifEdgeUntil = Infinity;
+        setTimeout(() => {
+          notifPos = 0;
+          notifScroll.scrollTo({ top: 0, behavior: "smooth" });
+          notifEdgeUntil = performance.now() + NOTIF_EDGE_PAUSE_MS;
+        }, NOTIF_EDGE_PAUSE_MS);
+      }
+      notifScroll.scrollTop = notifPos;
+    } else {
+      notifPos = notifScroll.scrollTop; // reprend là où l'utilisateur a scrollé
+    }
+    requestAnimationFrame(notifTick);
+  }
+
+  function setNotifCollapsed(collapsed) {
+    notifEl.classList.toggle("collapsed", collapsed);
+    notifToggle.title = collapsed ? "Afficher les tâches par affaire" : "Masquer les tâches par affaire";
+    storageSet("notif-collapsed", collapsed ? "1" : "0");
+    // La largeur dispo pour la grille change : recalcul du nombre de
+    // semaines via le handler resize existant.
+    window.dispatchEvent(new Event("resize"));
+  }
+
+  // Hauteur réelle de la topbar (variable selon le retour à la ligne des
+  // boutons) pour caler la barre collante juste en dessous.
+  function syncTopbarHeight() {
+    const h = document.querySelector(".topbar").offsetHeight;
+    document.documentElement.style.setProperty("--topbar-h", `${h}px`);
+  }
+  window.addEventListener("resize", syncTopbarHeight);
+  syncTopbarHeight();
+
+  notifScroll.addEventListener("mouseenter", () => { notifHover = true; });
+  notifScroll.addEventListener("mouseleave", () => { notifHover = false; });
+  notifScroll.addEventListener("focusin", () => { notifHover = true; });
+  notifScroll.addEventListener("focusout", () => { notifHover = false; });
+  notifScroll.addEventListener("touchstart", () => { notifHover = true; }, { passive: true });
+  notifPauseBtn.addEventListener("click", () => {
+    notifUserPaused = !notifUserPaused;
+    storageSet("notif-paused", notifUserPaused ? "1" : "0");
+    updatePauseButton();
+  });
+  notifToggle.addEventListener("click", () => setNotifCollapsed(!notifEl.classList.contains("collapsed")));
+
+  if (storageGet("notif-collapsed") === "1") notifEl.classList.add("collapsed");
+  updatePauseButton();
+  weeksShown = targetWeeksShown(); // largeur de grille définitive (barre posée)
+
   loadGrid();
+  loadNotifications();
+  requestAnimationFrame(notifTick);
   setInterval(() => { if (!modalOpen && !dragging) loadGrid(); }, 300000);
+  // Pas de rafraîchissement pendant une interaction dans la barre (sélecteur
+  // d'affectation ouvert, lecture) : le re-rendu fermerait le menu.
+  setInterval(() => { if (!notifHover) loadNotifications(); }, NOTIF_REFRESH_MS);
+  bindNotifActions(notifRoot);
+  bindNotifActions(gridRoot);
 })();

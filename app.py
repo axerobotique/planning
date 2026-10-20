@@ -860,6 +860,107 @@ def delete_affaire_task(row: int) -> None:
     sheets_client.clear_ranges([f"A{row}:D{row}"], sheet=TACHES_SHEET)
 
 
+# Barre latérale de notifications : tâches de suivi par affaire, lues dans
+# l'onglet "Affaires - Tâches" (alimenté aussi par l'outil de suivi
+# commercial). Le n° d'affaire et le sujet viennent de "Affaires en cours",
+# jointure sur la colonne "BDD Row" (ligne de l'affaire dans la BDD clients,
+# commune aux deux onglets). Seules les colonnes Statut (E) et Assigné (F)
+# sont modifiées depuis ici (cf. `update_affaire_notification`).
+AFF_TACHES_SHEET = "Affaires - Tâches"
+AFF_TACHES_READ_RANGE = "A2:G3000"
+AFF_EN_COURS_SHEET = "Affaires en cours"
+AFF_EN_COURS_READ_RANGE = "A2:H1000"
+AFF_STATUT_DONE = "TERMINÉ"
+DEADLINE_SOON_DAYS = 3
+
+
+def _cell(r: list, i: int) -> str:
+    return r[i].strip() if len(r) > i and r[i] else ""
+
+
+def _parse_fr_date(s: str) -> date | None:
+    try:
+        d, m, y = (int(x) for x in s.split("/"))
+        return date(y, m, d)
+    except (ValueError, TypeError):
+        return None
+
+
+def read_affaires_notifications() -> list[dict]:
+    """Une entrée par affaire ayant au moins une tâche non terminée :
+    tâches ouvertes (triées par deadline) + compteurs fait/total pour
+    afficher l'avancement. Affaires en retard d'abord, puis par nombre de
+    tâches ouvertes décroissant."""
+    taches_rows = sheets_client.get_range(AFF_TACHES_READ_RANGE, sheet=AFF_TACHES_SHEET)
+    en_cours_rows = sheets_client.get_range(AFF_EN_COURS_READ_RANGE, sheet=AFF_EN_COURS_SHEET)
+
+    infos = {
+        _cell(r, 0): {"numero": _cell(r, 1), "entreprise": _cell(r, 2), "sujet": _cell(r, 7)}
+        for r in en_cours_rows if _cell(r, 0)
+    }
+    today = date.today()
+    affaires: dict[str, dict] = {}
+    for idx, r in enumerate(taches_rows):
+        bdd_row, designation = _cell(r, 0), _cell(r, 3)
+        if not bdd_row or not designation:
+            continue
+        info = infos.get(bdd_row, {})
+        aff = affaires.setdefault(bdd_row, {
+            "bdd_row": bdd_row,
+            "numero": info.get("numero", ""),
+            "entreprise": info.get("entreprise") or _cell(r, 1),
+            "sujet": info.get("sujet", ""),
+            "total": 0,
+            "done": 0,
+            "open": [],
+        })
+        aff["total"] += 1
+        statut = _cell(r, 4)
+        if statut.upper() == AFF_STATUT_DONE:
+            aff["done"] += 1
+            continue
+        deadline = _parse_fr_date(_cell(r, 6))
+        delta = (deadline - today).days if deadline else None
+        aff["open"].append({
+            "row": 2 + idx,
+            "texte": designation,
+            "type": _cell(r, 2),
+            "statut": statut,
+            "assigne": _cell(r, 5),
+            "deadline": deadline.isoformat() if deadline else "",
+            "overdue": delta is not None and delta < 0,
+            "soon": delta is not None and 0 <= delta <= DEADLINE_SOON_DAYS,
+        })
+
+    out = [a for a in affaires.values() if a["open"]]
+    for a in out:
+        a["open"].sort(key=lambda t: (not t["overdue"], t["deadline"] or "9999"))
+        a["overdue"] = sum(t["overdue"] for t in a["open"])
+    out.sort(key=lambda a: (-a["overdue"], -len(a["open"]), a["entreprise"].upper()))
+    return out
+
+
+def update_affaire_notification(row: int, texte: str, assigne: str | None, done: bool) -> None:
+    """Affecte et/ou valide une tâche de "Affaires - Tâches". L'onglet est
+    aussi écrit par un autre outil (lignes ajoutées/supprimées) : on vérifie
+    que la ligne visée contient toujours la même désignation avant d'écrire,
+    pour ne jamais modifier la tâche d'une autre affaire sur un état front
+    obsolète."""
+    if row < 2:
+        raise PlanningError("Ligne invalide.")
+    rows = sheets_client.get_range(AFF_TACHES_READ_RANGE, sheet=AFF_TACHES_SHEET)
+    current = rows[row - 2] if row - 2 < len(rows) else []
+    if _cell(current, 3) != (texte or "").strip():
+        raise PlanningError("Cette tâche a été modifiée entre-temps — liste rechargée, réessayez.")
+    updates = []
+    if assigne is not None:
+        updates.append((f"F{row}", [[assigne.strip()]]))
+    if done:
+        updates.append((f"E{row}", [["Terminé"]]))
+    if updates:
+        sheets_client.batch_update_ranges(updates, sheet=AFF_TACHES_SHEET)
+
+
 def _parse_weeks(raw: str | None) -> int:
     try:
         weeks = int(raw)
@@ -1114,6 +1215,31 @@ def api_employee_row_remove():
             raise PlanningError("Technicien manquant.")
         remove_employee_row(employee)
         return jsonify({"ok": True})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/affaires/notifications")
+def api_affaires_notifications():
+    return jsonify({"ok": True, "affaires": read_affaires_notifications()})
+
+
+@app.route("/api/affaires/notifications/update", methods=["POST"])
+def api_affaires_notifications_update():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        try:
+            row = int(body.get("row"))
+        except (TypeError, ValueError):
+            raise PlanningError("Ligne invalide.")
+        assigne = body.get("assigne")
+        update_affaire_notification(
+            row,
+            body.get("texte") or "",
+            assigne if isinstance(assigne, str) else None,
+            bool(body.get("done")),
+        )
+        return jsonify({"ok": True, "affaires": read_affaires_notifications()})
     except PlanningError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

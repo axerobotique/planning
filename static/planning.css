@@ -471,6 +471,126 @@ tbody tr.emp-first-row th.col-name {
   padding: 10px 0 24px;
 }
 
+/* --- Mise en page planning + barre latérale "Tâches par affaire" ---
+   `.main` en flex:1 / min-width:0 : la largeur de .table-wrap (lue par
+   fitWeeksCount() dans planning.js) tient compte de la barre, donc le nombre
+   de semaines affichées s'adapte quand on la replie/déplie. */
+.layout { display: flex; align-items: flex-start; }
+.main { flex: 1; min-width: 0; }
+
+.notif {
+  --notif-w: 300px;
+  flex: 0 0 var(--notif-w);
+  width: var(--notif-w);
+  position: sticky;
+  top: var(--topbar-h, 57px);
+  height: calc(100vh - var(--topbar-h, 57px));
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--border);
+}
+.notif.collapsed { --notif-w: 36px; }
+.notif.collapsed .notif-title,
+.notif.collapsed .notif-pause,
+.notif.collapsed .notif-scroll,
+.notif.collapsed .notif-foot { display: none; }
+.notif.collapsed .notif-head { flex-direction: column; padding: 8px 4px; }
+.notif.collapsed .notif-toggle { transform: rotate(180deg); }
+
+.notif-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border); background: #f7f8fa;
+}
+.notif-title { font-size: 13px; font-weight: 600; flex: 1; }
+.notif-count {
+  min-width: 20px; padding: 1px 6px; border-radius: 10px; text-align: center;
+  font-size: 11px; font-weight: 700; background: #2472a4; color: #fff;
+}
+.notif-count:empty { display: none; }
+.notif-count.has-overdue { background: #c62828; }
+.notif-toggle, .notif-pause {
+  border: 1px solid var(--border); background: #fff; border-radius: 4px;
+  width: 24px; height: 24px; padding: 0; font-size: 10px; color: #556; cursor: pointer;
+}
+.notif-toggle:hover, .notif-pause:hover { background: #eef0f3; }
+.notif-pause.is-paused { background: #2472a4; color: #fff; border-color: #2472a4; }
+
+/* Défilement automatique piloté en JS (scrollTop), pas en animation CSS : la
+   liste reste scrollable à la main et cliquable, et la hauteur du contenu
+   varie à chaque rafraîchissement. */
+.notif-scroll { flex: 1; overflow-y: auto; padding: 8px 10px; scrollbar-width: thin; }
+.notif-empty { color: #99a; font-size: 12px; text-align: center; padding: 16px 0; }
+.notif-foot { font-size: 10px; color: #99a; padding: 6px 12px; border-top: 1px solid var(--border-v); }
+
+.notif-aff {
+  border: 1px solid var(--border); border-left: 4px solid #2472a4; border-radius: 6px;
+  padding: 8px 10px; margin-bottom: 10px; background: #fafbfc;
+}
+.notif-aff.has-overdue { border-left-color: #c62828; }
+.notif-aff-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.notif-aff-name { font-size: 13px; font-weight: 700; }
+.notif-aff-num { font-size: 11px; color: #667; white-space: nowrap; }
+.notif-aff-sujet { font-size: 11px; color: #556; margin-top: 2px; overflow-wrap: anywhere; }
+
+.notif-progress { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
+.notif-bar { flex: 1; height: 6px; border-radius: 3px; background: #e3e5e9; overflow: hidden; }
+.notif-bar > span { display: block; height: 100%; background: #2e7d32; }
+.notif-pct { font-size: 10px; color: #667; white-space: nowrap; }
+
+.notif-tasks { list-style: none; margin: 0; padding: 0; }
+.notif-tasks li {
+  font-size: 12px; line-height: 1.3; padding: 4px 0; border-top: 1px dashed #e3e5e9;
+  overflow-wrap: anywhere;
+}
+.notif-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.notif-tag {
+  font-size: 10px; padding: 0 5px; border-radius: 3px; background: #eef0f3; color: #556;
+}
+.notif-tag.st-planifie { background: #e6f4ea; color: #1e7e34; }
+.notif-tag.st-a-planifier { background: #fff3cd; color: #7a5c00; }
+.notif-tag.overdue { background: #fdecea; color: #9c1c12; font-weight: 700; }
+.notif-tag.soon { background: #ffe0b2; color: #8a4b00; font-weight: 700; }
+
+.notif-actions { display: flex; gap: 6px; margin-top: 4px; }
+.notif-assign {
+  flex: 1; min-width: 0; font-size: 11px; padding: 2px 4px;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text);
+}
+.notif-done {
+  flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; cursor: pointer;
+  border: 1px solid #a5d6a7; border-radius: 4px; background: #e6f4ea; color: #1e7e34;
+}
+.notif-done:hover { background: #c8e6c9; }
+.notif-done:disabled, .notif-assign:disabled { opacity: .5; cursor: default; }
+
+/* Bandeau "tâches d'affaire" sous le nom du technicien (colonne collante
+   .col-name) : replié par défaut, largeur bornée pour ne pas élargir la
+   colonne des noms. */
+.emp-tasks { margin-top: 4px; max-width: 180px; white-space: normal; font-weight: 400; }
+.emp-tasks:empty { display: none; }
+.emp-tasks summary {
+  cursor: pointer; font-size: 11px; font-weight: 600; color: #1d5c84;
+  background: #e3f0f8; border-radius: 4px; padding: 2px 6px; list-style-position: inside;
+}
+.emp-tasks summary.has-overdue { background: #fdecea; color: #9c1c12; }
+.emp-tasks ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.emp-tasks li {
+  display: grid; grid-template-columns: 1fr auto; gap: 1px 4px; align-items: start;
+  font-size: 11px; line-height: 1.25; padding: 3px 0; border-top: 1px dashed #d9dde3;
+}
+.emp-task-aff { grid-column: 1; font-weight: 700; color: #33404d; }
+.emp-task-txt { grid-column: 1; overflow-wrap: anywhere; }
+.emp-tasks li .notif-tag { grid-column: 1; justify-self: start; }
+.emp-tasks li .notif-done { grid-column: 2; grid-row: 1 / span 3; padding: 1px 5px; }
+
+@media (max-width: 900px) {
+  .notif:not(.collapsed) { --notif-w: 240px; }
+}
+
 @media (max-width: 600px) {
   .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
+  .layout { flex-direction: column; }
+  .notif, .notif.collapsed { position: static; width: 100%; flex: none; height: 50vh; border-left: none; border-top: 1px solid var(--border); }
+  .notif.collapsed { height: auto; }
 }

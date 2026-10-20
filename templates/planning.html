@@ -25,6 +25,8 @@
     </nav>
   </header>
 
+  <div class="layout">
+  <main class="main">
   <div id="banner-root"></div>
 
   <div class="table-wrap">
@@ -45,6 +47,21 @@
   </details>
 
   <footer class="foot">Source : Google Sheet "Planning" — onglet PLANNING quotidien. Glisser une tâche pour la déplacer, Ctrl+glisser pour la dupliquer.</footer>
+  </main>
+
+  <aside class="notif" id="notif" aria-label="Tâches par affaire">
+    <div class="notif-head">
+      <button type="button" class="notif-toggle" id="notif-toggle" title="Masquer/afficher les tâches par affaire">&#9654;</button>
+      <span class="notif-title">Tâches par affaire</span>
+      <span class="notif-count" id="notif-count"></span>
+      <button type="button" class="notif-pause" id="notif-pause" title="Mettre en pause le défilement">&#10074;&#10074;</button>
+    </div>
+    <div class="notif-scroll" id="notif-scroll">
+      <div id="notif-root"><p class="notif-empty">Chargement…</p></div>
+    </div>
+    <div class="notif-foot">Source : onglet « Affaires - Tâches »</div>
+  </aside>
+  </div>
 
   <div class="modal-overlay" id="modal-overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true">
