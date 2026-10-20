@@ -16,10 +16,28 @@ import secrets
 from datetime import date, timedelta
 
 from flask import Flask, Response, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 
 import sheets_client
 
 app = Flask(__name__)
+
+
+# Toute exception non prévue (erreur Google Sheets API, bug...) sur une route
+# /api/* laissait jusqu'ici Flask renvoyer sa page d'erreur 500 par défaut, en
+# HTML : le front, qui attend toujours du JSON (cf. `fetchJSON`), échouait
+# alors sur `resp.json()` avec un message cryptique ("Unexpected token '<'...
+# is not valid JSON") qui masquait complètement l'erreur réelle. On
+# intercepte donc ici pour renvoyer du JSON cohérent avec le reste de l'API,
+# et logger la trace complète côté serveur pour le diagnostic.
+@app.errorhandler(Exception)
+def _handle_unexpected_error(e):
+    if not request.path.startswith("/api/"):
+        raise e
+    if isinstance(e, HTTPException):
+        return jsonify({"ok": False, "error": e.description}), e.code
+    app.logger.exception("Erreur inattendue sur %s", request.path)
+    return jsonify({"ok": False, "error": f"Erreur serveur inattendue : {e}"}), 500
 
 # Protection minimale par mot de passe partagé : l'app n'a aucune notion
 # d'utilisateur/session, donc dès qu'elle est exposée publiquement (Cloud
