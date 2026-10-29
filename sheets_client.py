@@ -12,6 +12,7 @@ Auth : résolue dans cet ordre :
 from __future__ import annotations
 
 import os
+import random
 import socket
 import threading
 import time
@@ -23,6 +24,7 @@ import httplib2
 from google.oauth2 import service_account
 from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Contournement : sur certains postes/réseaux, l'IPv6 est annoncé par l'OS
 # mais en réalité mort vers l'infra Google (connexion qui n'aboutit jamais).
@@ -65,6 +67,17 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 CACHE_TTL_SECONDS = 30
 
+# Quota API Sheets : 60 lectures/minute pour le compte de service, partagé par
+# TOUS les utilisateurs de l'app. Au-delà, Google renvoie un 429 qui remontait
+# tel quel à l'écran. On retente donc brièvement avec backoff, puis, à défaut,
+# on sert la dernière valeur connue (même expirée) plutôt qu'une erreur.
+QUOTA_RETRY_DELAYS = (1.0, 2.0, 4.0)
+
+
+class QuotaExceededError(RuntimeError):
+    """Quota de lecture Google Sheets dépassé, même après les tentatives."""
+
+
 _cache: dict[str, tuple[float, Any]] = {}
 _cache_lock = Lock()
 _thread_local = threading.local()
@@ -84,13 +97,34 @@ def _get_service():
     return svc
 
 
+def _execute_read(req):
+    """Exécute une requête de lecture en retentant sur 429 (quota), avec backoff."""
+    for delay in (*QUOTA_RETRY_DELAYS, None):
+        try:
+            return req.execute()
+        except HttpError as e:
+            if e.resp.status != 429:
+                raise
+            if delay is None:
+                raise QuotaExceededError(
+                    "Quota de lecture Google Sheets atteint (60 lectures/min). "
+                    "Réessayez dans une minute."
+                ) from e
+            time.sleep(delay + random.uniform(0, 0.5))
+
+
 def _cached(key: str, loader):
     now = time.time()
     with _cache_lock:
         hit = _cache.get(key)
         if hit and now - hit[0] < CACHE_TTL_SECONDS:
             return hit[1]
-    value = loader()
+    try:
+        value = loader()
+    except QuotaExceededError:
+        if hit:
+            return hit[1]  # valeur expirée mais connue : mieux qu'une erreur
+        raise
     with _cache_lock:
         _cache[key] = (now, value)
     return value
@@ -102,7 +136,7 @@ def get_range(range_a1: str, sheet: str | None = None) -> list[list[str]]:
     key = f"values::{sheet}::{range_a1}"
 
     def loader():
-        resp = (
+        resp = _execute_read(
             _get_service()
             .spreadsheets()
             .values()
@@ -111,7 +145,6 @@ def get_range(range_a1: str, sheet: str | None = None) -> list[list[str]]:
                 range=f"'{sheet}'!{range_a1}",
                 valueRenderOption="FORMATTED_VALUE",
             )
-            .execute()
         )
         return resp.get("values", [])
 
@@ -130,6 +163,7 @@ def get_ranges(ranges_a1: list[str], sheet: str | None = None) -> dict[str, list
     now = time.time()
     result: dict[str, list[list[str]]] = {}
     missing: list[str] = []
+    stale: dict[str, list[list[str]]] = {}
     with _cache_lock:
         for r in ranges_a1:
             hit = _cache.get(f"values::{sheet}::{r}")
@@ -137,19 +171,28 @@ def get_ranges(ranges_a1: list[str], sheet: str | None = None) -> dict[str, list
                 result[r] = hit[1]
             else:
                 missing.append(r)
+                if hit:
+                    stale[r] = hit[1]
 
     if missing:
-        resp = (
-            _get_service()
-            .spreadsheets()
-            .values()
-            .batchGet(
-                spreadsheetId=SPREADSHEET_ID,
-                ranges=[f"'{sheet}'!{r}" for r in missing],
-                valueRenderOption="FORMATTED_VALUE",
+        try:
+            resp = _execute_read(
+                _get_service()
+                .spreadsheets()
+                .values()
+                .batchGet(
+                    spreadsheetId=SPREADSHEET_ID,
+                    ranges=[f"'{sheet}'!{r}" for r in missing],
+                    valueRenderOption="FORMATTED_VALUE",
+                )
             )
-            .execute()
-        )
+        except QuotaExceededError:
+            # Repli sur les valeurs expirées seulement si on les a TOUTES : un
+            # mélange partiel donnerait une grille incohérente.
+            if len(stale) == len(missing):
+                result.update(stale)
+                return result
+            raise
         with _cache_lock:
             for r, value_range in zip(missing, resp.get("valueRanges", [])):
                 values = value_range.get("values", [])
@@ -159,9 +202,17 @@ def get_ranges(ranges_a1: list[str], sheet: str | None = None) -> dict[str, list
     return result
 
 
-def _invalidate_cache() -> None:
+def _invalidate_cache(sheet: str | None = None) -> None:
+    """Vide le cache de l'onglet `sheet` uniquement (tout le cache si None) :
+    écrire dans le planning ne doit pas forcer la relecture de l'onglet des
+    codes ou des tâches d'affaire, chaque relecture consommant du quota."""
     with _cache_lock:
-        _cache.clear()
+        if sheet is None:
+            _cache.clear()
+            return
+        prefix = f"values::{sheet}::"
+        for k in [k for k in _cache if k.startswith(prefix)]:
+            del _cache[k]
 
 
 def update_range(range_a1: str, values: list[list[str]], sheet: str | None = None) -> None:
@@ -173,7 +224,7 @@ def update_range(range_a1: str, values: list[list[str]], sheet: str | None = Non
         valueInputOption="RAW",
         body={"values": values},
     ).execute()
-    _invalidate_cache()
+    _invalidate_cache(sheet)
 
 
 def batch_update_ranges(updates: list[tuple[str, list[list[str]]]], sheet: str | None = None) -> None:
@@ -193,7 +244,7 @@ def batch_update_ranges(updates: list[tuple[str, list[list[str]]]], sheet: str |
             "data": [{"range": f"'{sheet}'!{range_a1}", "values": values} for range_a1, values in updates],
         },
     ).execute()
-    _invalidate_cache()
+    _invalidate_cache(sheet)
 
 
 def append_row(values: list[str], sheet: str) -> None:
@@ -206,7 +257,7 @@ def append_row(values: list[str], sheet: str) -> None:
         insertDataOption="INSERT_ROWS",
         body={"values": [values]},
     ).execute()
-    _invalidate_cache()
+    _invalidate_cache(sheet)
 
 
 def clear_ranges(ranges_a1: list[str], sheet: str | None = None) -> None:
@@ -218,7 +269,7 @@ def clear_ranges(ranges_a1: list[str], sheet: str | None = None) -> None:
         spreadsheetId=SPREADSHEET_ID,
         body={"ranges": [f"'{sheet}'!{r}" for r in ranges_a1]},
     ).execute()
-    _invalidate_cache()
+    _invalidate_cache(sheet)
 
 
 def col_letter(n: int) -> str:
@@ -232,11 +283,10 @@ def col_letter(n: int) -> str:
 
 def _all_sheets_meta() -> dict[str, dict]:
     if "all" not in _sheet_meta_cache:
-        meta = (
+        meta = _execute_read(
             _get_service()
             .spreadsheets()
             .get(spreadsheetId=SPREADSHEET_ID, fields="sheets.properties")
-            .execute()
         )
         _sheet_meta_cache["all"] = {
             s["properties"]["title"]: s["properties"] for s in meta.get("sheets", [])
@@ -278,7 +328,7 @@ def ensure_sheet(title: str, header: list[str]) -> None:
         body={"values": [header]},
     ).execute()
     _sheet_meta_cache.pop("all", None)
-    _invalidate_cache()
+    _invalidate_cache(title)
 
 
 def insert_row_before(sheet_row_1based: int, sheet: str | None = None) -> None:
@@ -303,7 +353,7 @@ def insert_row_before(sheet_row_1based: int, sheet: str | None = None) -> None:
         },
     ).execute()
     _sheet_meta_cache.pop("all", None)  # rowCount a changé
-    _invalidate_cache()
+    _invalidate_cache(sheet or SHEET_NAME)
 
 
 def delete_row(sheet_row_1based: int, sheet: str | None = None) -> None:
@@ -326,4 +376,4 @@ def delete_row(sheet_row_1based: int, sheet: str | None = None) -> None:
         },
     ).execute()
     _sheet_meta_cache.pop("all", None)  # rowCount a changé
-    _invalidate_cache()
+    _invalidate_cache(sheet or SHEET_NAME)

@@ -538,6 +538,20 @@ tbody tr.emp-first-row th.col-name {
 .notif-bar > span { display: block; height: 100%; background: #2e7d32; }
 .notif-pct { font-size: 10px; color: #667; white-space: nowrap; }
 
+.notif-people { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.notif-person {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  background: #e3eef7; color: #1d5a85; font-weight: 600; white-space: nowrap;
+}
+.notif-person.unassigned { background: #eef0f3; color: #778; font-weight: 400; font-style: italic; }
+
+.notif-aff-details > summary {
+  font-size: 11px; color: #445; cursor: pointer; user-select: none; padding: 2px 0;
+}
+.notif-aff-details > summary:hover { color: #2472a4; }
+.notif-aff-details[open] > summary { margin-bottom: 2px; }
+.notif-overdue-count { color: #c62828; font-weight: 700; }
+
 .notif-tasks { list-style: none; margin: 0; padding: 0; }
 .notif-tasks li {
   font-size: 12px; line-height: 1.3; padding: 4px 0; border-top: 1px dashed #e3e5e9;

@@ -595,7 +595,11 @@
 
   function assigneeOptionsHtml(selected) {
     const names = (currentData && currentData.employees || []).map((e) => e.name);
-    return `<option value="">—</option>` + names.map((n) =>
+    // Valeur hors liste (ex : assignation multiple "THOMAS, STEPHANE" posée
+    // depuis CLAUDE PROSPECTION) : conservée telle quelle plutôt que "—".
+    const extra = selected && !names.includes(selected)
+      ? `<option value="${esc(selected)}" selected>${esc(selected)}</option>` : "";
+    return `<option value="">—</option>${extra}` + names.map((n) =>
       `<option value="${esc(n)}" ${n === selected ? "selected" : ""}>${esc(n)}</option>`
     ).join("");
   }
@@ -993,6 +997,17 @@
     return "";
   }
 
+  // Assignation multiple ("THOMAS, STEPHANE", posée depuis CLAUDE
+  // PROSPECTION) : un technicien du planning par nom reconnu.
+  function matchEmployees(assigne) {
+    const out = [];
+    (assigne || "").split(",").forEach((part) => {
+      const emp = matchEmployee(part);
+      if (emp && !out.includes(emp)) out.push(emp);
+    });
+    return out;
+  }
+
   // Le sheet peut contenir "THOMAS RIES" quand le planning affiche "THOMAS" :
   // correspondance sur le nom complet ou sur le 1er mot.
   function matchEmployee(assigne) {
@@ -1074,8 +1089,9 @@
   function renderEmployeeTasks() {
     const byEmp = {};
     notifData.forEach((a) => a.open.forEach((t) => {
-      const emp = matchEmployee(t.assigne);
-      if (emp) (byEmp[emp] = byEmp[emp] || []).push({ ...t, affaire: a });
+      matchEmployees(t.assigne).forEach((emp) => {
+        (byEmp[emp] = byEmp[emp] || []).push({ ...t, affaire: a });
+      });
     }));
     gridRoot.querySelectorAll(".emp-tasks").forEach((box) => {
       const emp = box.dataset.employee;
@@ -1128,20 +1144,57 @@
             </div>
           </li>`;
       }).join("");
+      const key = affaireKey(a);
+      const people = affairePeople(a);
+      const unassigned = a.open.filter((t) => !(t.assigne || "").trim()).length;
+      const peopleHtml = people.map((p) => `<span class="notif-person">👤 ${esc(p)}</span>`).join("")
+        + (unassigned ? `<span class="notif-person unassigned">${unassigned} non affectée${unassigned > 1 ? "s" : ""}</span>` : "");
       return `<section class="notif-aff${a.overdue ? " has-overdue" : ""}">
           <div class="notif-aff-head">
             <span class="notif-aff-name">${esc(a.entreprise)}</span>
             ${a.numero ? `<span class="notif-aff-num">#${esc(a.numero)}</span>` : ""}
           </div>
           ${a.sujet ? `<div class="notif-aff-sujet">${esc(a.sujet)}</div>` : ""}
+          ${peopleHtml ? `<div class="notif-people">${peopleHtml}</div>` : ""}
           <div class="notif-progress" title="${a.done} terminée(s) sur ${a.total}">
             <div class="notif-bar"><span style="width:${pct}%"></span></div>
             <span class="notif-pct">${a.done}/${a.total} · ${pct}%</span>
           </div>
-          <ul class="notif-tasks">${tasks}</ul>
+          <details class="notif-aff-details" data-key="${esc(key)}" ${notifAffOpen.has(key) ? "open" : ""}>
+            <summary>${a.open.length} tâche${a.open.length > 1 ? "s" : ""} ouverte${a.open.length > 1 ? "s" : ""}${a.overdue ? ` · <span class="notif-overdue-count">${a.overdue} en retard</span>` : ""}</summary>
+            <ul class="notif-tasks">${tasks}</ul>
+          </details>
         </section>`;
     }).join("");
   }
+
+  // Affaires dépliées dans la barre, conservées entre rafraîchissements
+  // (re-rendu toutes les NOTIF_REFRESH_MS) : repliées par défaut.
+  const notifAffOpen = new Set();
+
+  function affaireKey(a) {
+    return a.numero || a.entreprise || "";
+  }
+
+  // Intervenants d'une affaire (tâches ouvertes) : nom du planning si
+  // reconnu, sinon valeur brute du sheet — visibles même affaire repliée.
+  function affairePeople(a) {
+    const out = [];
+    a.open.forEach((t) => (t.assigne || "").split(",").forEach((part) => {
+      const raw = part.trim();
+      if (!raw) return;
+      const name = matchEmployee(raw) || raw;
+      if (!out.includes(name)) out.push(name);
+    }));
+    return out;
+  }
+
+  // "toggle" ne remonte pas (pas de bubbling) : écoute en phase de capture.
+  notifRoot.addEventListener("toggle", (e) => {
+    const det = e.target;
+    if (!det.classList || !det.classList.contains("notif-aff-details")) return;
+    if (det.open) notifAffOpen.add(det.dataset.key); else notifAffOpen.delete(det.dataset.key);
+  }, true);
 
   async function loadNotifications() {
     try {

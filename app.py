@@ -36,6 +36,9 @@ def _handle_unexpected_error(e):
         raise e
     if isinstance(e, HTTPException):
         return jsonify({"ok": False, "error": e.description}), e.code
+    if isinstance(e, sheets_client.QuotaExceededError):
+        app.logger.warning("Quota Sheets dépassé sur %s", request.path)
+        return jsonify({"ok": False, "error": str(e)}), 503
     app.logger.exception("Erreur inattendue sur %s", request.path)
     return jsonify({"ok": False, "error": f"Erreur serveur inattendue : {e}"}), 500
 
