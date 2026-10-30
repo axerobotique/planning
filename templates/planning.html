@@ -10,6 +10,10 @@
   <title>Planning atelier</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏭</text></svg>" />
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
+  <script>
+    // Applique le thème mémorisé avant le premier rendu (évite un flash clair).
+    try { if (localStorage.getItem("planning-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -22,6 +26,7 @@
       <button class="btn" id="btn-zoom" title="Afficher plus/moins de semaines">&minus; Dézoomer</button>
       <button class="btn btn-primary" id="btn-new">+ Nouvelle tâche</button>
       <a class="btn" href="{{ url_for('parametres') }}" title="Gérer les codes et leurs couleurs">&#9881; Paramètres</a>
+      <button type="button" class="btn" id="btn-theme" title="Passer en mode sombre">&#9790; Mode sombre</button>
     </nav>
   </header>
 
@@ -129,5 +134,6 @@
     window.PLANNING_WEEKS_MAX = {{ weeks_max }};
   </script>
   <script src="{{ url_for('static', filename='planning.js') }}"></script>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </body>
 </html>

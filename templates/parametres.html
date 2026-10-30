@@ -8,12 +8,17 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚙️</text></svg>" />
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='parametres.css') }}">
+  <script>
+    // Applique le thème mémorisé avant le premier rendu (évite un flash clair).
+    try { if (localStorage.getItem("planning-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+  </script>
 </head>
 <body>
   <header class="topbar">
     <h1>Paramètres — Codes &amp; couleurs</h1>
     <nav class="nav">
       <a class="btn" href="{{ url_for('planning') }}">&larr; Retour au planning</a>
+      <button type="button" class="btn" id="btn-theme" title="Passer en mode sombre">&#9790; Mode sombre</button>
     </nav>
   </header>
 
@@ -50,5 +55,6 @@
     window.INITIAL_LEGEND = {{ legend | tojson }};
   </script>
   <script src="{{ url_for('static', filename='parametres.js') }}"></script>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
 </body>
 </html>
