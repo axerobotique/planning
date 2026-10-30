@@ -94,8 +94,8 @@
 /* --- Mode sombre (cf. planning.css pour les variables et la topbar) --- */
 html[data-theme="dark"] .params-intro { color: #9aa3b0; }
 html[data-theme="dark"] .params-table,
-html[data-theme="dark"] .params-add { background: #1c2027; }
-html[data-theme="dark"] .params-table th { background: #232831; color: #9aa3b0; }
+html[data-theme="dark"] .params-add { background: #2a2f38; }
+html[data-theme="dark"] .params-table th { background: #333944; color: #9aa3b0; }
 html[data-theme="dark"] .params-table input.label-input:focus,
-html[data-theme="dark"] .params-add-row input[type="text"] { background: #14171c; }
+html[data-theme="dark"] .params-add-row input[type="text"] { background: #22262e; }
 html[data-theme="dark"] .params-add h2 { color: #b4bcc7; }
