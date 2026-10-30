@@ -1,0 +1,145 @@
+/* Feuilles d'heures (variables et topbar : cf. planning.css). */
+
+.hr-wrap { max-width: 720px; margin: 24px auto; padding: 0 20px 40px; }
+.hr-wrap-wide { max-width: 1640px; }
+
+.hr-intro, .hr-hint { font-size: 13px; color: #667; line-height: 1.5; }
+.hr-hint { font-size: 12px; margin-top: 20px; }
+.hr-empty { color: #99a; font-size: 13px; padding: 18px; text-align: center; }
+
+/* --- Liste des salariés --- */
+.hr-emp-list {
+  list-style: none; padding: 0; margin: 16px 0 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;
+}
+.hr-emp-link {
+  display: block; padding: 14px 16px; background: #fff; border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); text-decoration: none; font-weight: 600; font-size: 14px;
+}
+.hr-emp-link:hover { border-color: #2472a4; color: #2472a4; }
+
+/* --- Barre de navigation mois --- */
+.hr-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.hr-toolbar .btn { cursor: pointer; font-family: inherit; }
+.hr-month { font-size: 17px; font-weight: 600; min-width: 150px; text-align: center; }
+.hr-check { font-size: 13px; display: flex; align-items: center; gap: 4px; margin-left: 8px; cursor: pointer; }
+
+/* --- Indicateurs --- */
+.hr-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.hr-kpi { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.hr-kpi-v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hr-kpi-l { font-size: 11px; color: #778; text-transform: uppercase; letter-spacing: .03em; }
+.hr-kpi.is-warn { border-color: #e0a800; background: #fff8e1; }
+
+.pos { color: #1e7e34; }
+.neg { color: #b3261e; }
+
+/* --- Semaines --- */
+.hr-week { margin-bottom: 18px; }
+.hr-week-title { font-size: 14px; margin: 0 0 6px; color: #9c4a1a; }
+.hr-week-sum { font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.hr-grid {
+  background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto;
+}
+
+.hr-row {
+  display: grid;
+  grid-template-columns:
+    64px 92px repeat(4, 88px) 54px 58px
+    minmax(96px, 1fr) minmax(96px, 1fr) minmax(96px, 1fr) minmax(96px, 1fr)
+    minmax(130px, 1.3fr) minmax(120px, 1.2fr) 52px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-v);
+  min-width: 1380px;
+  font-size: 12px;
+}
+.hr-row:last-child { border-bottom: none; }
+.hr-row.is-today { background: var(--today); }
+.hr-row.is-absent .hr-f-time input { opacity: .35; }
+
+.hr-head {
+  background: #f7f8fa; font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em;
+  color: #778; padding-top: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--border);
+}
+
+.hr-date { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hr-dow { color: #778; font-weight: 500; }
+.hr-lbl { display: none; }
+.hr-f { display: block; min-width: 0; }
+
+.hr-f input, .hr-f select {
+  width: 100%; padding: 4px 5px; border: 1px solid var(--border); border-radius: 5px;
+  font-family: inherit; font-size: 12px; color: var(--text); background: #fff; min-width: 0;
+}
+.hr-f input:focus, .hr-f select:focus { outline: 2px solid #2472a4; outline-offset: -1px; border-color: #2472a4; }
+.hr-upper { text-transform: uppercase; }
+
+.hr-total, .hr-ecart { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; padding-right: 4px; }
+
+.hr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.hr-fill {
+  border: 1px solid var(--border); background: #f0f1f3; color: var(--text); border-radius: 5px;
+  width: 26px; height: 26px; cursor: pointer; font-size: 14px; line-height: 1; padding: 0;
+}
+.hr-fill:hover:not(:disabled) { background: #e6e8eb; }
+.hr-fill:disabled { opacity: .35; cursor: default; }
+
+.hr-status { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.hr-status.is-pending { background: #c9ccd1; }
+.hr-status.is-saving { background: #e0a800; }
+.hr-status.is-ok { background: #2e9e4f; }
+.hr-status.is-error { background: #c62828; }
+
+/* --- Mobile : chaque jour devient une carte avec libellés --- */
+@media (max-width: 900px) {
+  .hr-wrap { padding: 0 16px 32px; margin-top: 16px; }
+  .hr-grid { background: transparent; border: none; overflow: visible; }
+  .hr-head { display: none; }
+  .hr-row {
+    min-width: 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .hr-row:last-child { border-bottom: 1px solid var(--border); }
+  .hr-lbl { display: block; font-size: 10.5px; color: #778; margin-bottom: 2px; text-transform: uppercase; letter-spacing: .02em; }
+  .hr-date { grid-column: 1 / 3; font-size: 15px; }
+  .hr-actions { grid-column: 3 / 5; grid-row: 1; }
+  .hr-f, .hr-f-txt { grid-column: span 2; }
+  .hr-f-time { grid-column: span 1; }
+  .hr-total, .hr-ecart { grid-column: span 2; text-align: left; font-size: 15px; }
+  .hr-f input, .hr-f select { font-size: 16px; padding: 7px 6px; } /* 16px : évite le zoom auto iOS */
+  .hr-fill { width: 34px; height: 34px; }
+}
+
+/* --- Mode sombre --- */
+html[data-theme="dark"] .hr-intro,
+html[data-theme="dark"] .hr-hint,
+html[data-theme="dark"] .hr-kpi-l,
+html[data-theme="dark"] .hr-dow,
+html[data-theme="dark"] .hr-lbl { color: #9aa3b0; }
+html[data-theme="dark"] .hr-emp-link,
+html[data-theme="dark"] .hr-kpi,
+html[data-theme="dark"] .hr-grid { background: #2a2f38; }
+html[data-theme="dark"] .hr-head { background: #333944; color: #9aa3b0; }
+html[data-theme="dark"] .hr-f input,
+html[data-theme="dark"] .hr-f select { background: #22262e; color: var(--text); color-scheme: dark; }
+html[data-theme="dark"] .hr-fill { background: #3d4450; }
+html[data-theme="dark"] .hr-kpi.is-warn { background: #3d3214; border-color: #5c4b1a; }
+html[data-theme="dark"] .hr-week-title { color: #e0a070; }
+html[data-theme="dark"] .pos { color: #6fcf8a; }
+html[data-theme="dark"] .neg { color: #f08a80; }
+html[data-theme="dark"] .hr-emp-link:hover { color: #6fb3e0; border-color: #6fb3e0; }
+@media (max-width: 900px) {
+  html[data-theme="dark"] .hr-grid { background: transparent; }
+  html[data-theme="dark"] .hr-row { background: #2a2f38; }
+  html[data-theme="dark"] .hr-row.is-today { background: var(--today); }
+}

@@ -650,9 +650,9 @@ html[data-theme="dark"] .col-week { background: #363c47; border-left-color: #5a6
 html[data-theme="dark"] .week-start { border-left-color: #5a6372; }
 
 html[data-theme="dark"] tbody tr.emp-a,
-html[data-theme="dark"] tbody tr.emp-a .col-name { background: #2a2f38; }
+html[data-theme="dark"] tbody tr.emp-a .col-name { background: #24282f; }
 html[data-theme="dark"] tbody tr.emp-b,
-html[data-theme="dark"] tbody tr.emp-b .col-name { background: #30353f; }
+html[data-theme="dark"] tbody tr.emp-b .col-name { background: #3a414d; }
 html[data-theme="dark"] tbody tr.emp-first-row td,
 html[data-theme="dark"] tbody tr.emp-first-row th.col-name { border-top-color: #7a8494; }
 

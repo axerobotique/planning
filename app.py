@@ -964,6 +964,119 @@ def update_affaire_notification(row: int, texte: str, assigne: str | None, done:
         sheets_client.batch_update_ranges(updates, sheet=AFF_TACHES_SHEET)
 
 
+# Feuilles d'heures : une ligne par (salarié, jour) dans l'onglet "Heures",
+# même principe que "Taches"/"Codes" (onglet créé à la volée, sheet = seule
+# source de vérité). Les salariés sont ceux du planning (colonne C de
+# "PLANNING quotidien"), pour ne pas maintenir une 2e liste en parallèle.
+HEURES_SHEET = "Heures"
+HEURES_FIELDS = [
+    "absence", "arrivee", "debut_dej", "fin_dej", "depart",
+    "affaire_matin", "lieu_matin", "affaire_aprem", "lieu_aprem",
+    "vehicule", "covoiturage",
+]
+HEURES_HEADER = [
+    "Salarié", "Date", "Absence", "Heure d'arrivée", "Début déjeuner",
+    "Fin déjeuner", "Heure de départ", "Affaire matin", "Lieu matin",
+    "Affaire après-midi", "Lieu après-midi", "Véhicule", "Covoiturage avec",
+    "Total heures", "Écart", "Modifié le",
+]
+HEURES_READ_RANGE = "A2:P20000"
+HEURES_TIME_FIELDS = ("arrivee", "debut_dej", "fin_dej", "depart")
+HEURES_ABSENCES = ("", "FÉRIÉ", "CONGÉS", "RTT", "MALADIE", "RÉCUP")
+# Heures de référence par jour de la semaine (lun=0) : 4 × 7,75 h + 4 h le
+# vendredi = 35 h, déduit de la feuille Excel d'origine (08:00-17:00 avec
+# 1h15 de pause → écart 0 ; vendredi 08:00-17:00 → +3,75). Une journée
+# d'absence (férié, congés...) compte pour sa référence, écart nul.
+HEURES_REF_BY_WEEKDAY = (7.75, 7.75, 7.75, 7.75, 4.0, 0.0, 0.0)
+TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+HEURES_VEHICULES = [
+    "Transit", "Kuga", "Fiesta grise", "Fiesta blanche n°1 (GW…)",
+    "Fiesta blanche n°2 (GG…)", "Courier", "Puma",
+]
+HEURES_LIEUX = ["ATELIER", "RANGEMENT"]
+
+
+def _minutes(hhmm: str) -> int | None:
+    m = TIME_RE.match(hhmm or "")
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def heures_totals(d: date, entry: dict) -> tuple[float | None, float | None]:
+    """(total travaillé, écart à la référence) en heures décimales, None si la
+    journée est incomplète (arrivée ou départ manquant). Logique dupliquée
+    dans heures.js (`computeDay`) pour l'affichage instantané à la saisie."""
+    ref = HEURES_REF_BY_WEEKDAY[d.weekday()]
+    if entry.get("absence"):
+        return ref, 0.0
+    start, end = _minutes(entry.get("arrivee", "")), _minutes(entry.get("depart", ""))
+    if start is None or end is None:
+        return None, None
+    total = end - start
+    lunch_start, lunch_end = _minutes(entry.get("debut_dej", "")), _minutes(entry.get("fin_dej", ""))
+    if lunch_start is not None and lunch_end is not None:
+        total -= max(0, lunch_end - lunch_start)
+    hours = round(total / 60, 2)
+    return hours, round(hours - ref, 2)
+
+
+def _fmt_hours(h: float | None) -> str:
+    return "" if h is None else f"{h:.2f}".replace(".", ",")
+
+
+def read_heures(employee: str, year: int) -> dict[str, dict]:
+    """dict iso -> champs saisis, pour un salarié et une année. En cas de
+    doublon (deux enregistrements simultanés du même jour), la dernière ligne
+    l'emporte — c'est aussi celle que `save_heures` met à jour."""
+    sheets_client.ensure_sheet(HEURES_SHEET, HEURES_HEADER)
+    rows = sheets_client.get_range(HEURES_READ_RANGE, sheet=HEURES_SHEET)
+    prefix = f"{year:04d}-"
+    out: dict[str, dict] = {}
+    for r in rows:
+        if _cell(r, 0) != employee or not _cell(r, 1).startswith(prefix):
+            continue
+        out[_cell(r, 1)] = {f: _cell(r, 2 + i) for i, f in enumerate(HEURES_FIELDS)}
+    return out
+
+
+def save_heures(employee: str, d: date, fields: dict) -> dict:
+    blocks = read_employee_blocks()
+    find_block(blocks, employee)  # refuse un salarié inconnu du planning
+
+    entry = {f: str(fields.get(f) or "").strip()[:100] for f in HEURES_FIELDS}
+    entry["absence"] = entry["absence"].upper()
+    if entry["absence"] not in HEURES_ABSENCES:
+        raise PlanningError(f"Type d'absence inconnu : {entry['absence']!r}")
+    for f in HEURES_TIME_FIELDS:
+        if entry[f] and _minutes(entry[f]) is None:
+            raise PlanningError(f"Heure invalide : {entry[f]!r} (format attendu HH:MM).")
+    for a, b, label in (("arrivee", "depart", "L'heure de départ"), ("debut_dej", "fin_dej", "La fin du déjeuner")):
+        if entry[a] and entry[b] and _minutes(entry[b]) < _minutes(entry[a]):
+            raise PlanningError(f"{label} est antérieure à son début.")
+    for f in ("affaire_matin", "affaire_aprem", "lieu_matin", "lieu_aprem"):
+        entry[f] = entry[f].upper()
+
+    total, ecart = heures_totals(d, entry)
+    values = [employee, d.isoformat(), *(entry[f] for f in HEURES_FIELDS),
+              _fmt_hours(total), _fmt_hours(ecart), date.today().isoformat()]
+
+    sheets_client.ensure_sheet(HEURES_SHEET, HEURES_HEADER)
+    rows = sheets_client.get_range(HEURES_READ_RANGE, sheet=HEURES_SHEET)
+    target = None
+    for idx, r in enumerate(rows):
+        if _cell(r, 0) == employee and _cell(r, 1) == d.isoformat():
+            target = 2 + idx
+    if target is None:
+        sheets_client.append_row(values, sheet=HEURES_SHEET)
+    else:
+        sheets_client.update_range(f"A{target}:P{target}", [values], sheet=HEURES_SHEET)
+    return entry
+
+
+def read_affaire_numbers() -> list[str]:
+    rows = sheets_client.get_range(AFF_EN_COURS_READ_RANGE, sheet=AFF_EN_COURS_SHEET)
+    return sorted({_cell(r, 1).upper() for r in rows if _cell(r, 1)})
+
+
 def _parse_weeks(raw: str | None) -> int:
     try:
         weeks = int(raw)
@@ -991,6 +1104,62 @@ def planning():
 @app.route("/parametres")
 def parametres():
     return render_template("parametres.html", legend=_legend_json())
+
+
+@app.route("/heures")
+def heures_index():
+    return render_template("heures_index.html", employees=[b["name"] for b in read_employee_blocks()])
+
+
+@app.route("/heures/<path:employee>")
+def heures_employee(employee: str):
+    names = [b["name"] for b in read_employee_blocks()]
+    if employee not in names:
+        return Response(f"Salarié inconnu : {employee}", 404)
+    try:
+        affaires = read_affaire_numbers()
+    except Exception:  # onglet absent/illisible : la saisie reste possible sans suggestions
+        app.logger.exception("Lecture des n° d'affaire impossible")
+        affaires = []
+    return render_template(
+        "heures.html",
+        employee=employee,
+        config={
+            "employee": employee,
+            "colleagues": [n for n in names if n != employee],
+            "affaires": affaires,
+            "lieux": HEURES_LIEUX,
+            "vehicules": HEURES_VEHICULES,
+            "absences": [a for a in HEURES_ABSENCES if a],
+            "ref_by_weekday": HEURES_REF_BY_WEEKDAY,
+        },
+    )
+
+
+@app.route("/api/heures")
+def api_heures():
+    employee = (request.args.get("employee") or "").strip()
+    try:
+        year = int(request.args.get("year", ""))
+    except ValueError:
+        year = date.today().year
+    if not employee:
+        return jsonify({"ok": False, "error": "Salarié manquant."}), 400
+    return jsonify({"ok": True, "entries": read_heures(employee, year)})
+
+
+@app.route("/api/heures/save", methods=["POST"])
+def api_heures_save():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        employee = (body.get("employee") or "").strip()
+        if not employee:
+            raise PlanningError("Salarié manquant.")
+        d = parse_iso(body.get("date"))
+        entry = save_heures(employee, d, body.get("fields") or {})
+        return jsonify({"ok": True, "entry": entry})
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.route("/api/grid")
