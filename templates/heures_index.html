@@ -9,7 +9,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='heures.css') }}">
   <script>
-    try { if (localStorage.getItem("planning-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+    document.documentElement.dataset.theme = "dark";
+    try { if (localStorage.getItem("planning-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
   </script>
 </head>
 <body>
@@ -17,7 +18,7 @@
     <h1>Feuilles d'heures</h1>
     <nav class="nav">
       <a class="btn" href="{{ url_for('planning') }}">&larr; Planning</a>
-      <button type="button" class="btn" id="btn-theme" title="Passer en mode sombre">&#9790; Mode sombre</button>
+      <button type="button" class="btn" id="btn-theme" title="Revenir au mode clair">&#9728; Mode clair</button>
     </nav>
   </header>
 

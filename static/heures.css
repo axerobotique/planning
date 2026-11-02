@@ -18,6 +18,17 @@
 }
 .hr-emp-link:hover { border-color: #2472a4; color: #2472a4; }
 
+/* --- Connexion / mot de passe --- */
+.hr-auth { margin: 40px auto 0; }
+.hr-auth .hr-intro { margin: 0 0 14px; }
+.hr-inline-form { display: contents; }
+.hr-inline-form .btn, #btn-password { cursor: pointer; font-family: inherit; }
+.modal input[type="password"] {
+  width: 100%; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; font-family: inherit; color: var(--text); background: #fff;
+}
+.modal-error[hidden] { display: none; }
+
 /* --- Barre de navigation mois --- */
 .hr-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .hr-toolbar .btn { cursor: pointer; font-family: inherit; }
@@ -131,7 +142,8 @@ html[data-theme="dark"] .hr-kpi,
 html[data-theme="dark"] .hr-grid { background: #2a2f38; }
 html[data-theme="dark"] .hr-head { background: #333944; color: #9aa3b0; }
 html[data-theme="dark"] .hr-f input,
-html[data-theme="dark"] .hr-f select { background: #22262e; color: var(--text); color-scheme: dark; }
+html[data-theme="dark"] .hr-f select,
+html[data-theme="dark"] .modal input[type="password"] { background: #22262e; color: var(--text); color-scheme: dark; }
 html[data-theme="dark"] .hr-fill { background: #3d4450; }
 html[data-theme="dark"] .hr-kpi.is-warn { background: #3d3214; border-color: #5c4b1a; }
 html[data-theme="dark"] .hr-week-title { color: #e0a070; }

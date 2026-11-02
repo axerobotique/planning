@@ -13,10 +13,13 @@ import hashlib
 import os
 import re
 import secrets
+import threading
+import time
 from datetime import date, timedelta
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.exceptions import HTTPException
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import sheets_client
 
@@ -62,6 +65,33 @@ def _require_password():
             401,
             {"WWW-Authenticate": 'Basic realm="Planning ARA"'},
         )
+
+
+# Feuilles d'heures : accès cloisonné par salarié (cf. section "Comptes").
+# HEURES_ADMIN_PASSWORD = mot de passe général, ouvre toutes les feuilles sans
+# jamais demander de création de mot de passe. HEURES_INITIAL_PASSWORD = mot
+# de passe d'accueil, accepté uniquement pour un salarié qui n'a pas encore
+# défini le sien (1re connexion, ou après réinitialisation par l'admin).
+HEURES_ADMIN_PASSWORD = os.environ.get("HEURES_ADMIN_PASSWORD") or ""
+HEURES_INITIAL_PASSWORD = os.environ.get("HEURES_INITIAL_PASSWORD") or ""
+
+# Clé de signature du cookie de session. Doit être fixe et partagée par tous
+# les workers gunicorn (sinon une session ouverte sur un worker est refusée
+# par l'autre) : SECRET_KEY en variable d'env sur tout déploiement. En local
+# sans aucun mot de passe configuré, une clé aléatoire par process suffit.
+app.secret_key = os.environ.get("SECRET_KEY") or (
+    hashlib.sha256(
+        f"planning-ara::{HEURES_ADMIN_PASSWORD}::{HEURES_INITIAL_PASSWORD}::{PLANNING_PASSWORD or ''}".encode()
+    ).hexdigest()
+    if HEURES_ADMIN_PASSWORD or HEURES_INITIAL_PASSWORD
+    else secrets.token_hex(32)
+)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 # Ancrage de la reconstruction des dates : la feuille n'affiche que "dd/mm"
 # (pas d'année) donc on retrouve l'année réelle en se calant sur le premier
@@ -994,6 +1024,19 @@ HEURES_VEHICULES = [
     "Fiesta blanche n°2 (GG…)", "Courier", "Puma",
 ]
 HEURES_LIEUX = ["ATELIER", "RANGEMENT"]
+# Lignes du planning qui ne sont pas des salariés soumis aux feuilles d'heures
+# (sous-traitants, gérants). Comparaison sur le 1er mot en majuscules, pour
+# couvrir "THOMAS" comme "THOMAS RIES".
+HEURES_EXCLUS = {"SETEAM", "MMS", "MR", "KS", "QUENTIN", "THOMAS"}
+
+
+def heures_employees() -> list[str]:
+    names = []
+    for b in read_employee_blocks():
+        words = b["name"].upper().split()
+        if words and words[0] not in HEURES_EXCLUS:
+            names.append(b["name"])
+    return names
 
 
 def _minutes(hhmm: str) -> int | None:
@@ -1039,8 +1082,8 @@ def read_heures(employee: str, year: int) -> dict[str, dict]:
 
 
 def save_heures(employee: str, d: date, fields: dict) -> dict:
-    blocks = read_employee_blocks()
-    find_block(blocks, employee)  # refuse un salarié inconnu du planning
+    if employee not in heures_employees():
+        raise PlanningError(f"Salarié inconnu : {employee!r}")
 
     entry = {f: str(fields.get(f) or "").strip()[:100] for f in HEURES_FIELDS}
     entry["absence"] = entry["absence"].upper()
@@ -1070,6 +1113,177 @@ def save_heures(employee: str, d: date, fields: dict) -> dict:
     else:
         sheets_client.update_range(f"A{target}:P{target}", [values], sheet=HEURES_SHEET)
     return entry
+
+
+MOIS_FR = [
+    "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août",
+    "Septembre", "Octobre", "Novembre", "Décembre",
+]
+JOURS_LONGS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+
+
+def build_heures_xlsx(employee: str, year: int, month: int) -> bytes:
+    """Feuille d'heures d'un salarié pour un mois, au format .xlsx : une ligne
+    par jour du mois (week-ends compris, grisés), totaux recalculés via
+    `heures_totals` plutôt que relus du sheet (colonnes O/P potentiellement
+    obsolètes si la règle de calcul a changé depuis la saisie)."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    entries = read_heures(employee, year)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{MOIS_FR[month - 1]} {year}"[:31]
+
+    headers = [
+        "Date", "Jour", "Absence", "Arrivée", "Début déj.", "Fin déj.", "Départ",
+        "Total (h)", "Écart (h)", "Affaire matin", "Lieu matin",
+        "Affaire après-midi", "Lieu après-midi", "Véhicule", "Covoiturage avec",
+    ]
+    ws.append([f"Feuille d'heures — {employee} — {MOIS_FR[month - 1]} {year}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([])
+    ws.append(headers)
+    header_row = ws.max_row
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for cell in ws[header_row]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E40AF")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    weekend_fill = PatternFill("solid", fgColor="EEEEEE")
+    sum_total = sum_ecart = 0.0
+    d = date(year, month, 1)
+    while d.month == month:
+        e = entries.get(d.isoformat(), {})
+        total, ecart = heures_totals(d, e) if e else (None, None)
+        sum_total += total or 0
+        sum_ecart += ecart or 0
+        ws.append([
+            d, JOURS_LONGS[d.weekday()], e.get("absence", ""),
+            e.get("arrivee", ""), e.get("debut_dej", ""), e.get("fin_dej", ""), e.get("depart", ""),
+            total, ecart,
+            e.get("affaire_matin", ""), e.get("lieu_matin", ""),
+            e.get("affaire_aprem", ""), e.get("lieu_aprem", ""),
+            e.get("vehicule", ""), e.get("covoiturage", ""),
+        ])
+        row = ws[ws.max_row]
+        row[0].number_format = "DD/MM/YYYY"
+        row[7].number_format = row[8].number_format = "0.00"
+        for cell in row:
+            cell.border = border
+            if d.weekday() >= 5:
+                cell.fill = weekend_fill
+        d += timedelta(days=1)
+
+    ws.append([])
+    ws.append(["Total du mois", None, None, None, None, None, None, round(sum_total, 2), round(sum_ecart, 2)])
+    total_row = ws[ws.max_row]
+    for cell in total_row[:9]:
+        cell.font = Font(bold=True)
+    total_row[7].number_format = total_row[8].number_format = "0.00"
+
+    widths = [12, 11, 11, 9, 11, 9, 9, 10, 10, 18, 14, 18, 16, 22, 20]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# Comptes des feuilles d'heures : un mot de passe par salarié, stocké haché
+# (werkzeug, scrypt/pbkdf2 salé) dans l'onglet "Comptes" — même principe que
+# "Heures" (onglet créé à la volée, pas de stockage local : Render n'a pas de
+# disque persistant). Pas de ligne ou hash vide = mot de passe pas encore
+# défini → seul HEURES_INITIAL_PASSWORD est accepté.
+COMPTES_SHEET = "Comptes"
+COMPTES_HEADER = ["Salarié", "Mot de passe (haché)", "Modifié le"]
+COMPTES_READ_RANGE = "A2:C500"
+PASSWORD_MIN_LEN = 6
+PASSWORD_MAX_LEN = 128
+# Anti force brute, par salarié (l'IP réelle n'est pas fiable derrière le
+# proxy Render) : au-delà de LOGIN_MAX_FAILURES échecs dans la fenêtre, la
+# connexion à cette feuille est bloquée LOGIN_LOCK_SECONDS. Mémoire du process
+# uniquement (chaque worker compte de son côté) : frein, pas garantie.
+LOGIN_MAX_FAILURES = 8
+LOGIN_LOCK_SECONDS = 300
+_login_failures: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def _stamp(secret: str) -> str:
+    """Empreinte courte stockée en session : change à chaque nouveau mot de
+    passe, ce qui invalide les sessions ouvertes avec l'ancien."""
+    return hashlib.sha256(secret.encode()).hexdigest()[:16]
+
+
+def _read_comptes() -> dict[str, tuple[int, str]]:
+    """dict salarié -> (ligne du sheet, hash)."""
+    sheets_client.ensure_sheet(COMPTES_SHEET, COMPTES_HEADER)
+    rows = sheets_client.get_range(COMPTES_READ_RANGE, sheet=COMPTES_SHEET)
+    return {_cell(r, 0): (2 + i, _cell(r, 1)) for i, r in enumerate(rows) if _cell(r, 0)}
+
+
+def heures_password_hash(employee: str) -> str:
+    return _read_comptes().get(employee, (0, ""))[1]
+
+
+def set_heures_password(employee: str, password: str) -> None:
+    """`password` vide = réinitialisation (retour au mot de passe initial)."""
+    hashed = generate_password_hash(password) if password else ""
+    values = [employee, hashed, date.today().isoformat()]
+    row = _read_comptes().get(employee, (0, ""))[0]
+    if row:
+        sheets_client.update_range(f"A{row}:C{row}", [values], sheet=COMPTES_SHEET)
+    else:
+        sheets_client.append_row(values, sheet=COMPTES_SHEET)
+
+
+def validate_new_password(password: str, confirm: str) -> None:
+    if password != confirm:
+        raise PlanningError("Les deux mots de passe ne correspondent pas.")
+    if not (PASSWORD_MIN_LEN <= len(password) <= PASSWORD_MAX_LEN):
+        raise PlanningError(f"Le mot de passe doit faire au moins {PASSWORD_MIN_LEN} caractères.")
+    if password in (HEURES_INITIAL_PASSWORD, HEURES_ADMIN_PASSWORD):
+        raise PlanningError("Choisis un mot de passe personnel, différent du mot de passe commun.")
+
+
+def is_heures_admin() -> bool:
+    return bool(HEURES_ADMIN_PASSWORD) and session.get("heures_admin") == _stamp(HEURES_ADMIN_PASSWORD)
+
+
+def heures_can_access(employee: str) -> bool:
+    if is_heures_admin():
+        return True
+    stamp = (session.get("heures") or {}).get(employee)
+    hashed = heures_password_hash(employee) if stamp else ""
+    return bool(hashed) and stamp == _stamp(hashed)
+
+
+def _grant_heures(employee: str, hashed: str) -> None:
+    session.permanent = True
+    session["heures"] = {**(session.get("heures") or {}), employee: _stamp(hashed)}
+    session.pop("heures_setup", None)
+
+
+def _login_locked(employee: str) -> bool:
+    now = time.time()
+    with _login_lock:
+        recent = [t for t in _login_failures.get(employee, []) if now - t < LOGIN_LOCK_SECONDS]
+        _login_failures[employee] = recent
+        return len(recent) >= LOGIN_MAX_FAILURES
+
+
+def _login_failed(employee: str) -> None:
+    with _login_lock:
+        _login_failures.setdefault(employee, []).append(time.time())
 
 
 def read_affaire_numbers() -> list[str]:
@@ -1108,14 +1322,21 @@ def parametres():
 
 @app.route("/heures")
 def heures_index():
-    return render_template("heures_index.html", employees=[b["name"] for b in read_employee_blocks()])
+    return render_template("heures_index.html", employees=heures_employees())
 
 
 @app.route("/heures/<path:employee>")
 def heures_employee(employee: str):
-    names = [b["name"] for b in read_employee_blocks()]
+    names = heures_employees()
     if employee not in names:
         return Response(f"Salarié inconnu : {employee}", 404)
+    if not heures_can_access(employee):
+        if session.get("heures_setup") == employee:
+            return redirect(url_for("heures_setup", employee=employee))
+        return render_template(
+            "heures_login.html", employee=employee, mode="login",
+            first=not heures_password_hash(employee), error=None,
+        )
     try:
         affaires = read_affaire_numbers()
     except Exception:  # onglet absent/illisible : la saisie reste possible sans suggestions
@@ -1132,8 +1353,106 @@ def heures_employee(employee: str):
             "vehicules": HEURES_VEHICULES,
             "absences": [a for a in HEURES_ABSENCES if a],
             "ref_by_weekday": HEURES_REF_BY_WEEKDAY,
+            "is_admin": is_heures_admin(),
         },
     )
+
+
+def _heures_login_page(employee: str, mode: str, error: str, status: int = 400):
+    return render_template(
+        "heures_login.html", employee=employee, mode=mode,
+        first=not heures_password_hash(employee), error=error,
+    ), status
+
+
+@app.route("/heures/<path:employee>/connexion", methods=["POST"])
+def heures_login(employee: str):
+    if employee not in heures_employees():
+        return Response(f"Salarié inconnu : {employee}", 404)
+    if _login_locked(employee):
+        return _heures_login_page(employee, "login", "Trop d'essais infructueux. Réessaie dans quelques minutes.", 429)
+    password = request.form.get("password") or ""
+    if HEURES_ADMIN_PASSWORD and secrets.compare_digest(password, HEURES_ADMIN_PASSWORD):
+        session.permanent = True
+        session["heures_admin"] = _stamp(HEURES_ADMIN_PASSWORD)
+        return redirect(url_for("heures_employee", employee=employee))
+    hashed = heures_password_hash(employee)
+    if hashed:
+        if check_password_hash(hashed, password):
+            _grant_heures(employee, hashed)
+            return redirect(url_for("heures_employee", employee=employee))
+    elif HEURES_INITIAL_PASSWORD and secrets.compare_digest(password, HEURES_INITIAL_PASSWORD):
+        session["heures_setup"] = employee
+        return redirect(url_for("heures_setup", employee=employee))
+    _login_failed(employee)
+    return _heures_login_page(employee, "login", "Mot de passe incorrect.", 401)
+
+
+@app.route("/heures/<path:employee>/premiere-connexion", methods=["GET", "POST"])
+def heures_setup(employee: str):
+    """Création du mot de passe personnel, accessible uniquement juste après
+    une connexion avec le mot de passe initial (`heures_setup` en session) et
+    tant qu'aucun mot de passe n'a été défini pour ce salarié."""
+    if employee not in heures_employees():
+        return Response(f"Salarié inconnu : {employee}", 404)
+    if session.get("heures_setup") != employee or heures_password_hash(employee):
+        session.pop("heures_setup", None)
+        return redirect(url_for("heures_employee", employee=employee))
+    if request.method == "GET":
+        return _heures_login_page(employee, "setup", None, 200)
+    password = request.form.get("password") or ""
+    try:
+        validate_new_password(password, request.form.get("confirm") or "")
+    except PlanningError as e:
+        return _heures_login_page(employee, "setup", str(e))
+    set_heures_password(employee, password)
+    _grant_heures(employee, heures_password_hash(employee))
+    return redirect(url_for("heures_employee", employee=employee))
+
+
+@app.route("/heures/deconnexion", methods=["POST"])
+def heures_logout():
+    for k in ("heures", "heures_admin", "heures_setup"):
+        session.pop(k, None)
+    return redirect(url_for("heures_index"))
+
+
+@app.route("/api/heures/password", methods=["POST"])
+def api_heures_password():
+    """Changement du mot de passe depuis la feuille : le salarié doit fournir
+    l'actuel ; l'admin peut en définir un sans le connaître."""
+    body = request.get_json(force=True, silent=True) or {}
+    employee = (body.get("employee") or "").strip()
+    if not heures_can_access(employee):
+        return jsonify({"ok": False, "error": "Accès refusé — reconnecte-toi."}), 403
+    try:
+        if not is_heures_admin():
+            if _login_locked(employee):
+                raise PlanningError("Trop d'essais infructueux. Réessaie dans quelques minutes.")
+            if not check_password_hash(heures_password_hash(employee), body.get("current") or ""):
+                _login_failed(employee)
+                raise PlanningError("Mot de passe actuel incorrect.")
+        password = body.get("password") or ""
+        validate_new_password(password, body.get("confirm") or "")
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    set_heures_password(employee, password)
+    if not is_heures_admin():
+        _grant_heures(employee, heures_password_hash(employee))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/heures/password/reset", methods=["POST"])
+def api_heures_password_reset():
+    """Admin : efface le mot de passe d'un salarié (oubli), qui devra se
+    reconnecter avec le mot de passe initial et en choisir un nouveau."""
+    if not is_heures_admin():
+        return jsonify({"ok": False, "error": "Réservé à l'administrateur."}), 403
+    employee = ((request.get_json(force=True, silent=True) or {}).get("employee") or "").strip()
+    if employee not in heures_employees():
+        return jsonify({"ok": False, "error": f"Salarié inconnu : {employee!r}"}), 400
+    set_heures_password(employee, "")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/heures")
@@ -1145,7 +1464,33 @@ def api_heures():
         year = date.today().year
     if not employee:
         return jsonify({"ok": False, "error": "Salarié manquant."}), 400
+    if not heures_can_access(employee):
+        return jsonify({"ok": False, "error": "Accès refusé — reconnecte-toi."}), 403
     return jsonify({"ok": True, "entries": read_heures(employee, year)})
+
+
+@app.route("/heures/<path:employee>/export.xlsx")
+def heures_export(employee: str):
+    if employee not in heures_employees():
+        return Response(f"Salarié inconnu : {employee}", 404)
+    if not heures_can_access(employee):
+        return redirect(url_for("heures_employee", employee=employee))
+    today = date.today()
+    try:
+        year = int(request.args.get("year", today.year))
+        month = int(request.args.get("month", today.month))
+    except ValueError:
+        return Response("Année ou mois invalide.", 400)
+    if not (1 <= month <= 12 and 2000 <= year <= 2100):
+        return Response("Année ou mois invalide.", 400)
+    data = build_heures_xlsx(employee, year, month)
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", employee).strip("_") or "salarie"
+    filename = f"heures_{safe_name}_{year:04d}-{month:02d}.xlsx"
+    return Response(
+        data,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.route("/api/heures/save", methods=["POST"])
@@ -1155,6 +1500,8 @@ def api_heures_save():
         employee = (body.get("employee") or "").strip()
         if not employee:
             raise PlanningError("Salarié manquant.")
+        if not heures_can_access(employee):
+            return jsonify({"ok": False, "error": "Accès refusé — reconnecte-toi."}), 403
         d = parse_iso(body.get("date"))
         entry = save_heures(employee, d, body.get("fields") or {})
         return jsonify({"ok": True, "entry": entry})
@@ -1472,7 +1819,7 @@ def api_affaire_tasks_delete():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5050"))
+    port = int(os.environ.get("PORT", "5055"))
     # debug=True active le débogueur Werkzeug (exécution de code arbitraire
     # via son interface web) : à réserver au poste local, jamais à un
     # déploiement accessible publiquement (Render, etc.).

@@ -12,7 +12,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
   <script>
     // Applique le thème mémorisé avant le premier rendu (évite un flash clair).
-    try { if (localStorage.getItem("planning-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+    document.documentElement.dataset.theme = "dark";
+    try { if (localStorage.getItem("planning-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
   </script>
 </head>
 <body>
@@ -27,7 +28,7 @@
       <button class="btn btn-primary" id="btn-new">+ Nouvelle tâche</button>
       <a class="btn" href="{{ url_for('heures_index') }}" title="Saisie des heures par salarié">&#9201; Feuilles d'heures</a>
       <a class="btn" href="{{ url_for('parametres') }}" title="Gérer les codes et leurs couleurs">&#9881; Paramètres</a>
-      <button type="button" class="btn" id="btn-theme" title="Passer en mode sombre">&#9790; Mode sombre</button>
+      <button type="button" class="btn" id="btn-theme" title="Revenir au mode clair">&#9728; Mode clair</button>
     </nav>
   </header>
 

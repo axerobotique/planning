@@ -321,6 +321,62 @@
     month = today.getMonth();
     load();
   });
+  document.getElementById("btn-export").addEventListener("click", () => {
+    if (document.querySelector(".hr-status.is-pending, .hr-status.is-saving")) {
+      showToast("Enregistrement en cours — réessayez dans un instant.", "danger");
+      return;
+    }
+    window.location.href = `/heures/${encodeURIComponent(CFG.employee)}/export.xlsx?year=${year}&month=${month + 1}`;
+  });
+  // --- Mot de passe de la feuille (changement ; réinitialisation si admin) ---
+  const pwdOverlay = document.getElementById("pwd-overlay");
+  const pwdForm = document.getElementById("pwd-form");
+  const pwdError = document.getElementById("pwd-error");
+  const pwdReset = document.getElementById("pwd-reset");
+
+  function closePwd() {
+    pwdOverlay.hidden = true;
+    pwdForm.reset();
+    pwdError.hidden = true;
+  }
+
+  async function postPwd(url, payload, okText) {
+    pwdError.hidden = true;
+    try {
+      const d = await fetchJSON(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employee: CFG.employee, ...payload }),
+      });
+      if (!d.ok) throw new Error(d.error || "Erreur.");
+      closePwd();
+      showToast(okText);
+    } catch (e) {
+      pwdError.textContent = e.message;
+      pwdError.hidden = false;
+    }
+  }
+
+  document.getElementById("btn-password").addEventListener("click", () => {
+    pwdOverlay.hidden = false;
+    pwdForm.querySelector("input").focus();
+  });
+  document.getElementById("pwd-cancel").addEventListener("click", closePwd);
+  pwdOverlay.addEventListener("click", (e) => { if (e.target === pwdOverlay) closePwd(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pwdOverlay.hidden) closePwd(); });
+  pwdForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = new FormData(pwdForm);
+    postPwd("/api/heures/password", {
+      current: f.get("current") || "", password: f.get("password"), confirm: f.get("confirm"),
+    }, "Mot de passe modifié.");
+  });
+  if (pwdReset) {
+    pwdReset.addEventListener("click", () => {
+      if (!confirm(`Réinitialiser le mot de passe de ${CFG.employee} ? Il devra se reconnecter avec le mot de passe initial.`)) return;
+      postPwd("/api/heures/password/reset", {}, "Mot de passe réinitialisé.");
+    });
+  }
+
   showWeekends.addEventListener("change", () => {
     try { localStorage.setItem("heures-weekends", showWeekends.checked ? "1" : "0"); } catch (e) { /* idem */ }
     render();

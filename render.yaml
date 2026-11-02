@@ -8,3 +8,9 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /etc/secrets/google-credentials.json
+      - key: SECRET_KEY
+        generateValue: true
+      - key: HEURES_ADMIN_PASSWORD
+        sync: false
+      - key: HEURES_INITIAL_PASSWORD
+        sync: false

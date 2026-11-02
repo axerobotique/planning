@@ -9,7 +9,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='heures.css') }}">
   <script>
-    try { if (localStorage.getItem("planning-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
+    document.documentElement.dataset.theme = "dark";
+    try { if (localStorage.getItem("planning-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
   </script>
 </head>
 <body>
@@ -17,9 +18,39 @@
     <h1>Heures — {{ employee }}</h1>
     <nav class="nav">
       <a class="btn" href="{{ url_for('heures_index') }}">&larr; Salariés</a>
-      <button type="button" class="btn" id="btn-theme" title="Passer en mode sombre">&#9790; Mode sombre</button>
+      <button type="button" class="btn" id="btn-password" title="Changer le mot de passe de cette feuille">&#128273; Mot de passe</button>
+      <form method="post" action="{{ url_for('heures_logout') }}" class="hr-inline-form">
+        <button type="submit" class="btn" title="{% if config.is_admin %}Fermer la session administrateur{% else %}Se déconnecter{% endif %}">&#9211; Déconnexion</button>
+      </form>
+      <button type="button" class="btn" id="btn-theme" title="Revenir au mode clair">&#9728; Mode clair</button>
     </nav>
   </header>
+
+  <div class="modal-overlay" id="pwd-overlay" hidden>
+    <form class="modal" id="pwd-form">
+      <h2>Mot de passe — {{ employee }}</h2>
+      <div class="modal-error" id="pwd-error" hidden></div>
+      {% if not config.is_admin %}
+        <label>Mot de passe actuel
+          <input type="password" name="current" autocomplete="current-password" required>
+        </label>
+      {% endif %}
+      <label>Nouveau mot de passe
+        <input type="password" name="password" autocomplete="new-password" required minlength="6">
+      </label>
+      <label>Confirmation
+        <input type="password" name="confirm" autocomplete="new-password" required minlength="6">
+      </label>
+      <div class="modal-actions">
+        {% if config.is_admin %}
+          <button type="button" class="btn btn-danger" id="pwd-reset" title="Le salarié devra se reconnecter avec le mot de passe initial et en choisir un nouveau">Réinitialiser</button>
+        {% endif %}
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="pwd-cancel">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
 
   <main class="hr-wrap hr-wrap-wide">
     <div class="hr-toolbar">
@@ -27,6 +58,7 @@
       <span class="hr-month" id="month-label"></span>
       <button type="button" class="btn" id="btn-next">&rarr;</button>
       <button type="button" class="btn btn-primary" id="btn-today">Mois en cours</button>
+      <button type="button" class="btn" id="btn-export" title="Télécharger le mois affiché au format Excel">&#8681; Exporter Excel</button>
       <label class="hr-check"><input type="checkbox" id="show-weekends"> Week-ends</label>
     </div>
 

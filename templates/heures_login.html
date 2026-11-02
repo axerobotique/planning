@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="google" content="notranslate">
+  <title>Connexion — {{ employee }}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='planning.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='heures.css') }}">
+  <script>
+    document.documentElement.dataset.theme = "dark";
+    try { if (localStorage.getItem("planning-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Heures — {{ employee }}</h1>
+    <nav class="nav">
+      <a class="btn" href="{{ url_for('heures_index') }}">&larr; Salariés</a>
+      <button type="button" class="btn" id="btn-theme" title="Revenir au mode clair">&#9728; Mode clair</button>
+    </nav>
+  </header>
+
+  <main class="hr-wrap">
+    {% if mode == "setup" %}
+      <form class="modal hr-auth" method="post" action="{{ url_for('heures_setup', employee=employee) }}">
+        <h2>Première connexion</h2>
+        <p class="hr-intro">Choisis ton mot de passe personnel (6 caractères minimum). Il te sera demandé à chaque connexion à ta feuille d'heures.</p>
+        {% if error %}<div class="modal-error">{{ error }}</div>{% endif %}
+        <label>Nouveau mot de passe
+          <input type="password" name="password" autocomplete="new-password" required minlength="6" autofocus>
+        </label>
+        <label>Confirmation
+          <input type="password" name="confirm" autocomplete="new-password" required minlength="6">
+        </label>
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </form>
+    {% else %}
+      <form class="modal hr-auth" method="post" action="{{ url_for('heures_login', employee=employee) }}">
+        <h2>Mot de passe</h2>
+        <p class="hr-intro">
+          {% if first %}
+            Première connexion : saisis le mot de passe initial communiqué par l'administrateur, tu choisiras ensuite le tien.
+          {% else %}
+            Saisis ton mot de passe pour accéder à ta feuille d'heures.
+          {% endif %}
+        </p>
+        {% if error %}<div class="modal-error">{{ error }}</div>{% endif %}
+        <label>Mot de passe
+          <input type="password" name="password" autocomplete="current-password" required autofocus>
+        </label>
+        <div class="modal-actions">
+          <span class="spacer"></span>
+          <button type="submit" class="btn btn-primary">Se connecter</button>
+        </div>
+      </form>
+    {% endif %}
+  </main>
+
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
+</body>
+</html>
