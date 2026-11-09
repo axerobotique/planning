@@ -22,6 +22,7 @@
   const affaireTasksSection = document.getElementById("affaire-tasks");
   const affaireTasksList = document.getElementById("affaire-tasks-list");
   const affaireTaskNewInput = document.getElementById("affaire-task-new");
+  const affaireTaskNewDate = document.getElementById("affaire-task-new-date");
   const affaireTaskNewAssignee = document.getElementById("affaire-task-new-assignee");
   const affaireTaskAddBtn = document.getElementById("affaire-task-add-btn");
   const dateJump = document.getElementById("date-jump");
@@ -617,14 +618,14 @@
     clearTimeout(affaireTasksDebounce);
   }
 
-  function openCreateModal(employee, dateIso) {
+  function openCreateModal(employee, dateIso, prefill = {}) {
     editing = null;
     modalTitle.textContent = "Nouvelle tâche";
-    fillEmployeeCheckboxes(employee ? [employee] : []);
-    fCode.value = "";
-    fClient.value = "";
-    fText.value = "";
-    fAffaire.value = "";
+    fillEmployeeCheckboxes(prefill.employees || (employee ? [employee] : []));
+    fCode.value = prefill.code || "";
+    fClient.value = prefill.client || "";
+    fText.value = prefill.texte || "";
+    fAffaire.value = prefill.affaire || "";
     fPending.checked = false;
     fDateStart.value = dateIso;
     fDateEnd.value = dateIso;
@@ -674,6 +675,14 @@
     fClient.focus();
   }
 
+  // Date de planification proposée pour une tâche : sa date si elle est à
+  // venir, sinon aujourd'hui (date locale), pour ne pas planifier dans le passé.
+  function planningDateFor(iso) {
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return iso && iso > today ? iso : today;
+  }
+
   // --- Checklist de tâches liée au numéro d'affaire saisi dans la modale ---
   // Stockée dans un onglet séparé ("Taches"), partagée entre toutes les
   // tâches planning qui référencent le même numéro d'affaire.
@@ -709,9 +718,26 @@
           <input type="checkbox" class="affaire-task-check" ${t.fait ? "checked" : ""}>
           <span class="${t.fait ? "done" : ""}">${esc(t.texte)}</span>
         </label>
+        <input type="date" class="affaire-task-date" title="Date de la tâche" value="${esc(t.date || "")}">
         <select class="affaire-task-assignee" title="Assigner à">${assigneeOptionsHtml(t.assigne || "")}</select>
+        <button type="button" class="affaire-task-plan" title="Créer dans le planning">📅</button>
         <button type="button" class="affaire-task-del" title="Supprimer">×</button>
       </li>`).join("");
+
+    affaireTasksList.querySelectorAll(".affaire-task-plan").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const li = btn.closest("li");
+        const assigne = li.querySelector(".affaire-task-assignee").value;
+        const employees = assigne ? [assigne] : getSelectedEmployees();
+        openCreateModal(employees[0] || "", planningDateFor(li.querySelector(".affaire-task-date").value), {
+          employees,
+          code: fCode.value,
+          client: fClient.value,
+          texte: li.querySelector("label span").textContent,
+          affaire: fAffaire.value.trim(),
+        });
+      });
+    });
 
     affaireTasksList.querySelectorAll(".affaire-task-check").forEach((chk) => {
       chk.addEventListener("change", async () => {
@@ -730,6 +756,26 @@
           showToast(e.message || "Erreur.", "danger");
         } finally {
           chk.disabled = false;
+        }
+      });
+    });
+    affaireTasksList.querySelectorAll(".affaire-task-date").forEach((input) => {
+      let saved = input.value;
+      input.addEventListener("change", async () => {
+        const row = Number(input.closest("li").dataset.row);
+        input.disabled = true;
+        try {
+          const d = await fetchJSON("/api/affaire/tasks/date", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ row, date: input.value }),
+          });
+          if (!d.ok) throw new Error(d.error || "Erreur.");
+          saved = input.value;
+        } catch (e) {
+          input.value = saved;
+          showToast(e.message || "Erreur.", "danger");
+        } finally {
+          input.disabled = false;
         }
       });
     });
@@ -781,10 +827,11 @@
     try {
       const d = await fetchJSON("/api/affaire/tasks/add", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ numero_affaire: numero, texte, assigne: affaireTaskNewAssignee.value }),
+        body: JSON.stringify({ numero_affaire: numero, texte, assigne: affaireTaskNewAssignee.value, date: affaireTaskNewDate.value }),
       });
       if (!d.ok) { showToast(d.error || "Erreur.", "danger"); return; }
       affaireTaskNewInput.value = "";
+      affaireTaskNewDate.value = "";
       renderAffaireTasks(d.tasks || []);
     } catch (e) {
       showToast(e.message || "Erreur.", "danger");
@@ -1046,6 +1093,21 @@
   // listes sont re-rendues à chaque rafraîchissement.
   function bindNotifActions(root) {
     root.addEventListener("change", async (e) => {
+      const dateInput = e.target.closest(".notif-deadline");
+      if (dateInput) {
+        // Saisie clavier en cours : l'année partielle (ex. 0002) est déjà "valide".
+        if (dateInput.value && dateInput.value < "2000") return;
+        const li = dateInput.closest("[data-row]");
+        dateInput.disabled = true;
+        try {
+          await updateNotification(Number(li.dataset.row), li.dataset.texte, { deadline: dateInput.value });
+          showToast(dateInput.value ? "Date enregistrée." : "Date retirée.");
+        } catch (err) {
+          showToast(err.message || "Erreur.", "danger");
+          dateInput.disabled = false;
+        }
+        return;
+      }
       const sel = e.target.closest(".notif-assign");
       if (!sel) return;
       const li = sel.closest("[data-row]");
@@ -1059,6 +1121,12 @@
       }
     });
     root.addEventListener("click", async (e) => {
+      const planBtn = e.target.closest(".notif-plan");
+      if (planBtn) {
+        e.stopPropagation();
+        planNotifTask(Number(planBtn.closest("[data-row]").dataset.row));
+        return;
+      }
       const btn = e.target.closest(".notif-done");
       if (!btn) return;
       e.stopPropagation();
@@ -1077,6 +1145,50 @@
   let notifData = [];
   const empTasksOpen = new Set(); // bandeaux dépliés, conservés entre rendus
 
+  // Ouvre la fiche "Nouvelle tâche" pré-remplie depuis une tâche d'affaire.
+  function planNotifTask(row) {
+    for (const a of notifData) {
+      const t = a.open.find((x) => x.row === row);
+      if (!t) continue;
+      const employees = matchEmployees(t.assigne);
+      openCreateModal(employees[0] || "", planningDateFor(t.deadline), {
+        employees,
+        client: a.entreprise,
+        texte: t.texte,
+        affaire: a.numero,
+      });
+      return;
+    }
+  }
+
+  function plannedKey(numero, texte) {
+    return `${(numero || "").trim()}|${(texte || "").replace(/\s+/g, " ").trim().toLowerCase()}`;
+  }
+
+  // Dates où chaque tâche d'affaire figure dans la grille chargée (lien :
+  // n° d'affaire + texte, tels que pré-remplis par "Planifier"). Dédoublonné
+  // car une tâche multi-techniciens apparaît sur plusieurs lignes.
+  function plannedRanges() {
+    const out = new Map();
+    ((currentData && currentData.employees) || []).forEach((emp) => emp.cells.forEach((day) => day.forEach((f) => {
+      if (f.placeholder || !f.is_start || !f.affaire || !f.texte) return;
+      const key = plannedKey(f.affaire, f.texte);
+      const ranges = out.get(key) || new Map();
+      ranges.set(`${f.date_start}|${f.date_end}`, { start: f.date_start, end: f.date_end });
+      out.set(key, ranges);
+    })));
+    return out;
+  }
+
+  function plannedTagHtml(planned, numero, texte) {
+    const ranges = planned.get(plannedKey(numero, texte));
+    if (!ranges) return "";
+    const labels = [...ranges.values()]
+      .sort((a, b) => a.start.localeCompare(b.start))
+      .map((r) => formatFrDate(r.start) + (r.end !== r.start ? ` → ${formatFrDate(r.end)}` : ""));
+    return `<span class="notif-tag st-planifie" title="Date(s) dans le planning">📅 ${esc(labels.join(", "))}</span>`;
+  }
+
   function applyNotifications(affaires) {
     notifData = affaires;
     renderNotifications(affaires);
@@ -1087,6 +1199,7 @@
   // ouvertes, repliées par défaut (compteur seul) pour ne pas gonfler la
   // hauteur des lignes de la grille.
   function renderEmployeeTasks() {
+    const planned = plannedRanges();
     const byEmp = {};
     notifData.forEach((a) => a.open.forEach((t) => {
       matchEmployees(t.assigne).forEach((emp) => {
@@ -1102,7 +1215,9 @@
         <li data-row="${t.row}" data-texte="${esc(t.texte)}">
           <span class="emp-task-aff">${esc(t.affaire.entreprise)}${t.affaire.numero ? " #" + esc(t.affaire.numero) : ""}</span>
           <span class="emp-task-txt">${esc(t.texte)}</span>
+          ${plannedTagHtml(planned, t.affaire.numero, t.texte)}
           ${t.deadline ? `<span class="notif-tag ${t.overdue ? "overdue" : (t.soon ? "soon" : "")}">${t.overdue ? "⚠ " : "⏱ "}${esc(formatFrDate(t.deadline))}</span>` : ""}
+          <button type="button" class="notif-plan" title="Créer dans le planning">📅</button>
           <button type="button" class="notif-done" title="Valider (marquer Terminé)">✓</button>
         </li>`).join("");
       box.innerHTML = `<details ${empTasksOpen.has(emp) ? "open" : ""}>
@@ -1126,12 +1241,15 @@
       notifRoot.innerHTML = '<p class="notif-empty">Aucune tâche ouverte. 🎉</p>';
       return;
     }
+    const planned = plannedRanges();
     notifRoot.innerHTML = affaires.map((a) => {
       const pct = a.total ? Math.round((a.done / a.total) * 100) : 0;
       const tasks = a.open.map((t) => {
         const tags = [];
         if (t.statut) tags.push(`<span class="notif-tag ${statutClass(t.statut)}">${esc(t.statut)}</span>`);
         if (t.assigne) tags.push(`<span class="notif-tag">👤 ${esc(t.assigne)}</span>`);
+        const plannedTag = plannedTagHtml(planned, a.numero, t.texte);
+        if (plannedTag) tags.push(plannedTag);
         if (t.deadline) {
           const cls = t.overdue ? "overdue" : (t.soon ? "soon" : "");
           tags.push(`<span class="notif-tag ${cls}">${t.overdue ? "⚠ " : "⏱ "}${esc(formatFrDate(t.deadline))}</span>`);
@@ -1140,6 +1258,8 @@
             <div class="notif-meta">${tags.join("")}</div>
             <div class="notif-actions">
               <select class="notif-assign" title="Affecter à">${notifAssigneeOptions(t.assigne)}</select>
+              <input type="date" class="notif-deadline" title="Date de la tâche" value="${esc(t.deadline)}">
+              <button type="button" class="notif-plan" title="Créer dans le planning">📅 Planifier</button>
               <button type="button" class="notif-done" title="Valider (marquer Terminé)">✓ Valider</button>
             </div>
           </li>`;

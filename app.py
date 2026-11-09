@@ -150,8 +150,10 @@ STATUT_STYLES = {
 MARKER_RE = re.compile(r"\s*\[(AFF|GRP|PEND):([^\]]*)\]\s*$")
 
 TACHES_SHEET = "Taches"
-TACHES_HEADER = ["Numéro affaire", "Texte", "Fait", "Assigné"]
-TACHES_READ_RANGE = "A2:D2000"
+# Colonnes E/F ("Fait (sync)", "Assigné (sync)") : écrites par un outil externe,
+# l'app n'y touche jamais. La date est donc en colonne G.
+TACHES_HEADER = ["Numéro affaire", "Texte", "Fait", "Assigné", "Fait (sync)", "Assigné (sync)", "Date"]
+TACHES_READ_RANGE = "A2:G2000"
 
 # Les codes de la légende (ROB, MEC, ...) sont gérés depuis un onglet dédié
 # plutôt que codés en dur : ajout/édition/suppression depuis l'UI, partagés
@@ -842,7 +844,7 @@ def build_grid(week_offset: int, codes: dict | None = None, weeks: int = WEEKS_S
     }
 
 
-# True une fois la migration de colonne "Assigné" (ajoutée après coup) vérifiée
+# True une fois la migration des colonnes "Assigné"/"Date" (ajoutées après coup) vérifiée
 # sur l'onglet Taches, pour ne pas réécrire l'en-tête à chaque requête.
 _taches_migrated = False
 
@@ -851,10 +853,12 @@ def ensure_taches_sheet() -> None:
     global _taches_migrated
     sheets_client.ensure_sheet(TACHES_SHEET, TACHES_HEADER)
     if not _taches_migrated:
-        # Onglet créé avant l'ajout de la colonne "Assigné" (3 colonnes à
-        # l'origine) : ensure_sheet() n'écrit l'en-tête qu'à la création, donc
+        # Onglet créé avant l'ajout des colonnes "Assigné" et "Date" (3 colonnes
+        # à l'origine) : ensure_sheet() n'écrit l'en-tête qu'à la création, donc
         # on complète ici sans toucher aux données existantes.
-        sheets_client.update_range("D1", [["Assigné"]], sheet=TACHES_SHEET)
+        sheets_client.batch_update_ranges(
+            [("D1", [["Assigné"]]), ("G1", [["Date"]])], sheet=TACHES_SHEET
+        )
         _taches_migrated = True
 
 
@@ -872,13 +876,33 @@ def read_affaire_tasks(numero_affaire: str) -> list[dict]:
             continue  # ligne vidée par une suppression précédente
         fait = bool(r[2].strip()) if len(r) > 2 and r[2] else False
         assigne = (r[3].strip() if len(r) > 3 and r[3] else "")
-        out.append({"row": sheet_row, "texte": texte, "fait": fait, "assigne": assigne})
+        task_date = _parse_fr_date(r[6].strip()) if len(r) > 6 and r[6] else None
+        out.append({
+            "row": sheet_row,
+            "texte": texte,
+            "fait": fait,
+            "assigne": assigne,
+            "date": task_date.isoformat() if task_date else "",
+        })
     return out
 
 
-def add_affaire_task(numero_affaire: str, texte: str, assigne: str = "") -> None:
+def _affaire_task_date_cell(iso_date: str) -> str:
+    """Date ISO venant du front -> JJ/MM/AAAA dans le sheet (même format que les
+    deadlines de "Affaires - Tâches"). Chaîne vide = pas de date."""
+    iso_date = (iso_date or "").strip()
+    if not iso_date:
+        return ""
+    try:
+        return date.fromisoformat(iso_date).strftime("%d/%m/%Y")
+    except ValueError:
+        raise PlanningError("Date invalide.")
+
+
+def add_affaire_task(numero_affaire: str, texte: str, assigne: str = "", iso_date: str = "") -> None:
     ensure_taches_sheet()
-    sheets_client.append_row([numero_affaire, texte, "", assigne], sheet=TACHES_SHEET)
+    date_cell = _affaire_task_date_cell(iso_date)
+    sheets_client.append_row([numero_affaire, texte, "", assigne, "", "", date_cell], sheet=TACHES_SHEET)
 
 
 def set_affaire_task_done(row: int, fait: bool) -> None:
@@ -889,16 +913,20 @@ def set_affaire_task_assignee(row: int, assigne: str) -> None:
     sheets_client.update_range(f"D{row}", [[assigne]], sheet=TACHES_SHEET)
 
 
+def set_affaire_task_date(row: int, iso_date: str) -> None:
+    sheets_client.update_range(f"G{row}", [[_affaire_task_date_cell(iso_date)]], sheet=TACHES_SHEET)
+
+
 def delete_affaire_task(row: int) -> None:
-    sheets_client.clear_ranges([f"A{row}:D{row}"], sheet=TACHES_SHEET)
+    sheets_client.clear_ranges([f"A{row}:D{row}", f"G{row}"], sheet=TACHES_SHEET)
 
 
 # Barre latérale de notifications : tâches de suivi par affaire, lues dans
 # l'onglet "Affaires - Tâches" (alimenté aussi par l'outil de suivi
 # commercial). Le n° d'affaire et le sujet viennent de "Affaires en cours",
 # jointure sur la colonne "BDD Row" (ligne de l'affaire dans la BDD clients,
-# commune aux deux onglets). Seules les colonnes Statut (E) et Assigné (F)
-# sont modifiées depuis ici (cf. `update_affaire_notification`).
+# commune aux deux onglets). Seules les colonnes Statut (E), Assigné (F) et
+# Deadline (G) sont modifiées depuis ici (cf. `update_affaire_notification`).
 AFF_TACHES_SHEET = "Affaires - Tâches"
 AFF_TACHES_READ_RANGE = "A2:G3000"
 AFF_EN_COURS_SHEET = "Affaires en cours"
@@ -973,8 +1001,10 @@ def read_affaires_notifications() -> list[dict]:
     return out
 
 
-def update_affaire_notification(row: int, texte: str, assigne: str | None, done: bool) -> None:
-    """Affecte et/ou valide une tâche de "Affaires - Tâches". L'onglet est
+def update_affaire_notification(
+    row: int, texte: str, assigne: str | None, done: bool, deadline: str | None = None
+) -> None:
+    """Affecte, date et/ou valide une tâche de "Affaires - Tâches". L'onglet est
     aussi écrit par un autre outil (lignes ajoutées/supprimées) : on vérifie
     que la ligne visée contient toujours la même désignation avant d'écrire,
     pour ne jamais modifier la tâche d'une autre affaire sur un état front
@@ -988,6 +1018,8 @@ def update_affaire_notification(row: int, texte: str, assigne: str | None, done:
     updates = []
     if assigne is not None:
         updates.append((f"F{row}", [[assigne.strip()]]))
+    if deadline is not None:
+        updates.append((f"G{row}", [[_affaire_task_date_cell(deadline)]]))
     if done:
         updates.append((f"E{row}", [["Terminé"]]))
     if updates:
@@ -1752,11 +1784,13 @@ def api_affaires_notifications_update():
         except (TypeError, ValueError):
             raise PlanningError("Ligne invalide.")
         assigne = body.get("assigne")
+        deadline = body.get("deadline")
         update_affaire_notification(
             row,
             body.get("texte") or "",
             assigne if isinstance(assigne, str) else None,
             bool(body.get("done")),
+            deadline if isinstance(deadline, str) else None,
         )
         return jsonify({"ok": True, "affaires": read_affaires_notifications()})
     except PlanningError as e:
@@ -1781,7 +1815,10 @@ def api_affaire_tasks_add():
         return jsonify({"ok": False, "error": "Numéro d'affaire manquant."}), 400
     if not texte:
         return jsonify({"ok": False, "error": "Texte de la sous-tâche vide."}), 400
-    add_affaire_task(numero, texte, assigne)
+    try:
+        add_affaire_task(numero, texte, assigne, body.get("date") or "")
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True, "tasks": read_affaire_tasks(numero)})
 
 
@@ -1804,6 +1841,20 @@ def api_affaire_tasks_assign():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Ligne invalide."}), 400
     set_affaire_task_assignee(row, (body.get("assigne") or "").strip())
+    return jsonify({"ok": True})
+
+
+@app.route("/api/affaire/tasks/date", methods=["POST"])
+def api_affaire_tasks_date():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        row = int(body.get("row"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Ligne invalide."}), 400
+    try:
+        set_affaire_task_date(row, body.get("date") or "")
+    except PlanningError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True})
 
 

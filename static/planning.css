@@ -336,7 +336,7 @@ tbody tr.emp-first-row th.col-name {
 .modal-overlay[hidden] { display: none; }
 
 .modal {
-  background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 440px;
+  background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 540px;
   box-shadow: 0 10px 40px rgba(0,0,0,.2);
 }
 .modal h2 { margin: 0 0 14px; font-size: 16px; }
@@ -401,6 +401,10 @@ tbody tr.emp-first-row th.col-name {
   color: var(--text); background: #fff;
 }
 
+.modal input.affaire-task-date, .modal #affaire-task-new-date {
+  flex: none; width: 122px; margin: 0; padding: 3px 4px; font-size: 12px;
+}
+
 .affaire-task-del {
   background: none; border: none; color: #b33; font-size: 16px; line-height: 1;
   cursor: pointer; padding: 2px 4px;
@@ -408,9 +412,13 @@ tbody tr.emp-first-row th.col-name {
 .affaire-task-del:hover { color: #7a1c12; }
 
 .affaire-tasks-add { display: flex; gap: 6px; margin-top: 8px; }
-.affaire-tasks-add input { flex: 1; margin-top: 0; }
+.affaire-tasks-add input { flex: 1; min-width: 0; margin-top: 0; }
 .affaire-tasks-add select { flex: none; width: auto; max-width: 110px; margin-top: 0; padding: 6px 6px; }
 .affaire-tasks-add button { padding: 4px 12px; }
+@media (max-width: 560px) {
+  .affaire-tasks-list li, .affaire-tasks-add { flex-wrap: wrap; }
+  .affaire-tasks-list label, .affaire-tasks-add input[type="text"] { flex: 1 0 100%; }
+}
 
 .modal-error {
   background: #fdecea; color: #9c1c12; border: 1px solid #f5c2bd;
@@ -479,7 +487,7 @@ tbody tr.emp-first-row th.col-name {
 .main { flex: 1; min-width: 0; }
 
 .notif {
-  --notif-w: 300px;
+  --notif-w: 380px;
   flex: 0 0 var(--notif-w);
   width: var(--notif-w);
   position: sticky;
@@ -566,9 +574,21 @@ tbody tr.emp-first-row th.col-name {
 .notif-tag.overdue { background: #fdecea; color: #9c1c12; font-weight: 700; }
 .notif-tag.soon { background: #ffe0b2; color: #8a4b00; font-weight: 700; }
 
-.notif-actions { display: flex; gap: 6px; margin-top: 4px; }
+/* Grille plutôt que flex : le sélecteur d'affectation n'est plus écrasé par
+   les éléments à largeur fixe ; une seule colonne si la barre est étroite. */
+.notif-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; margin-top: 4px; }
+.notif-deadline {
+  width: 100%; min-width: 0; box-sizing: border-box; font-size: 11px; padding: 2px 4px;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text);
+}
+.notif-plan, .affaire-task-plan {
+  flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text);
+}
+.notif-plan:hover, .affaire-task-plan:hover { background: #eef1f5; }
+.affaire-task-plan { padding: 2px 4px; }
 .notif-assign {
-  flex: 1; min-width: 0; font-size: 11px; padding: 2px 4px;
+  width: 100%; min-width: 0; box-sizing: border-box; font-size: 11px; padding: 2px 4px;
   border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text);
 }
 .notif-done {
@@ -576,7 +596,7 @@ tbody tr.emp-first-row th.col-name {
   border: 1px solid #a5d6a7; border-radius: 4px; background: #e6f4ea; color: #1e7e34;
 }
 .notif-done:hover { background: #c8e6c9; }
-.notif-done:disabled, .notif-assign:disabled { opacity: .5; cursor: default; }
+.notif-done:disabled, .notif-assign:disabled, .notif-deadline:disabled { opacity: .5; cursor: default; }
 
 /* Bandeau "tâches d'affaire" sous le nom du technicien (colonne collante
    .col-name) : replié par défaut, largeur bornée pour ne pas élargir la
@@ -590,13 +610,14 @@ tbody tr.emp-first-row th.col-name {
 .emp-tasks summary.has-overdue { background: #fdecea; color: #9c1c12; }
 .emp-tasks ul { list-style: none; margin: 4px 0 0; padding: 0; }
 .emp-tasks li {
-  display: grid; grid-template-columns: 1fr auto; gap: 1px 4px; align-items: start;
+  display: grid; grid-template-columns: 1fr auto auto; gap: 1px 4px; align-items: start;
   font-size: 11px; line-height: 1.25; padding: 3px 0; border-top: 1px dashed #d9dde3;
 }
 .emp-task-aff { grid-column: 1; font-weight: 700; color: #33404d; }
 .emp-task-txt { grid-column: 1; overflow-wrap: anywhere; }
 .emp-tasks li .notif-tag { grid-column: 1; justify-self: start; }
-.emp-tasks li .notif-done { grid-column: 2; grid-row: 1 / span 3; padding: 1px 5px; }
+.emp-tasks li .notif-plan { grid-column: 2; grid-row: 1 / span 3; padding: 1px 4px; }
+.emp-tasks li .notif-done { grid-column: 3; grid-row: 1 / span 3; padding: 1px 5px; }
 
 @media (max-width: 900px) {
   .notif:not(.collapsed) { --notif-w: 240px; }
@@ -678,6 +699,9 @@ html[data-theme="dark"] .modal textarea,
 html[data-theme="dark"] .employee-multiselect,
 html[data-theme="dark"] .affaire-task-assignee,
 html[data-theme="dark"] .notif-assign,
+html[data-theme="dark"] .notif-deadline,
+html[data-theme="dark"] .notif-plan,
+html[data-theme="dark"] .affaire-task-plan,
 html[data-theme="dark"] .notif-toggle,
 html[data-theme="dark"] .notif-pause { background: #22262e; color: var(--text); }
 html[data-theme="dark"] .notif-toggle,
